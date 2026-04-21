@@ -9,6 +9,9 @@ import {
   TransactionStage,
 } from '../transactions/transaction.schema';
 
+/**
+ * All monetary fields are integer kuruş (1 TRY = 100 kuruş).
+ */
 export interface AgentEarningsReport {
   agentId: string;
   name: string;
@@ -69,18 +72,20 @@ export class AgentsService {
     for (const tx of completed) {
       const breakdown = tx.commissionBreakdown;
       if (!breakdown) continue;
-      if (String(tx.listingAgent) === id) asListingAgent += breakdown.listingAgentAmount;
-      if (String(tx.sellingAgent) === id) asSellingAgent += breakdown.sellingAgentAmount;
+      if (String(tx.listingAgent) === id)
+        asListingAgent += breakdown.listingAgentAmount;
+      if (String(tx.sellingAgent) === id)
+        asSellingAgent += breakdown.sellingAgentAmount;
     }
 
     return {
       agentId: String(agent._id),
       name: agent.name,
       email: agent.email,
-      totalEarned: Math.round((asListingAgent + asSellingAgent) * 100) / 100,
+      totalEarned: asListingAgent + asSellingAgent,
       completedTransactionCount: completed.length,
-      asListingAgent: Math.round(asListingAgent * 100) / 100,
-      asSellingAgent: Math.round(asSellingAgent * 100) / 100,
+      asListingAgent,
+      asSellingAgent,
     };
   }
 }

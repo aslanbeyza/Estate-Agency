@@ -21,7 +21,7 @@ const { showForm, form, submitting, formError, submit, toggle } = useCrudForm({
       : null,
   submit: (f) => txStore.create({
     propertyAddress: f.propertyAddress,
-    totalServiceFee: f.totalServiceFee!,
+    totalServiceFee: toKurus(f.totalServiceFee!),
     listingAgent: f.listingAgent,
     sellingAgent: f.sellingAgent,
   }),
@@ -65,7 +65,7 @@ const { showForm, form, submitting, formError, submit, toggle } = useCrudForm({
           <label class="form-label">Hizmet Bedeli (₺)</label>
           <input v-model.number="form.totalServiceFee" type="number" placeholder="Örn: 150000" class="input-field" />
           <p v-if="form.totalServiceFee" class="text-xs text-indigo-500 dark:text-indigo-400 mt-1.5 font-medium">
-            Ajans payı: {{ formatTRY(form.totalServiceFee * 0.5) }} · Danışman havuzu: {{ formatTRY(form.totalServiceFee * 0.5) }}
+            Ajans payı: {{ formatTRY(Math.floor(toKurus(form.totalServiceFee) / 2)) }} · Danışman havuzu: {{ formatTRY(Math.floor(toKurus(form.totalServiceFee) / 2)) }}
           </p>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">

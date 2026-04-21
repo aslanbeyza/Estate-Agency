@@ -16,7 +16,18 @@ export class Transaction {
   @Prop({ required: true })
   propertyAddress: string;
 
-  @Prop({ required: true, min: 0 })
+  /**
+   * Total service fee stored as **integer kuruş** (1 TRY = 100 kuruş).
+   * Keeping money as an integer unit sidesteps IEEE-754 float drift entirely.
+   */
+  @Prop({
+    required: true,
+    min: 0,
+    validate: {
+      validator: Number.isInteger,
+      message: 'totalServiceFee must be an integer (kuruş)',
+    },
+  })
   totalServiceFee: number;
 
   @Prop({ enum: TransactionStage, default: TransactionStage.AGREEMENT })

@@ -30,12 +30,14 @@ src/
 
 **Transaction** (`transactions/transaction.schema.ts`)
 - `propertyAddress: string`
-- `totalServiceFee: number` (min 0)
+- `totalServiceFee: number` — **integer kuruş** (1 TRY = 100 kuruş), min 0, `Number.isInteger` validator
 - `stage: 'agreement' | 'earnest_money' | 'title_deed' | 'completed'`
 - `listingAgent: ObjectId → Agent`
 - `sellingAgent: ObjectId → Agent`
 - `commissionBreakdown?: { agencyAmount, listingAgentAmount, sellingAgentAmount, scenario }`
-  — populated **only** when stage transitions into `completed`
+  — populated **only** when stage transitions into `completed`; all amounts are integer kuruş
+
+> **Money is stored as an integer, not a float.** Every monetary field in the schema and every amount in the commission breakdown is kept in kuruş (1/100 TRY). This sidesteps IEEE-754 drift (`0.1 + 0.2 !== 0.3`) at the persistence layer — there is no rounding, no `Number.EPSILON`, and no big-decimal dependency. The presentation layer (frontend `formatTRY` / `toKurus` helpers) is the single place that converts between kuruş and human-readable TL.
 
 The same agent can appear as both `listingAgent` and `sellingAgent` (supports the "same agent" scenario).
 
@@ -85,19 +87,21 @@ Implemented in `CommissionService.calculate()`:
 | listingAgent == sellingAgent | agency = 50%, that agent = 50%           | `same_agent`        |
 | listingAgent != sellingAgent | agency = 50%, each agent = 25%           | `different_agents`  |
 
-**Rounding policy.** JS `number` is IEEE-754 double; `0.1 + 0.2 !== 0.3`. For money we round to 2 decimals (cent precision) using `Math.round((n + Number.EPSILON) * 100) / 100`. To guarantee the **sum invariant**
+**Integer arithmetic, residue absorbed by the agency.** Because every input is an integer kuruş (see §1.2), the calculator can do pure integer math with `Math.floor` — no rounding, no `Number.EPSILON`, no big-decimal library. The sum invariant
 
 ```
 agencyAmount + listingAgentAmount + sellingAgentAmount === totalServiceFee
 ```
 
-even for fees that do not divide evenly by 4 (e.g. `100_001`), the agency absorbs the rounding residue:
+is preserved byte-for-byte even for fees that do not divide evenly by 4 (e.g. `100_001 kr`). The agency absorbs the 0–3 kuruş residue, which matches real-world accounting conventions (the house takes the rounding):
 
 ```typescript
-const agencyAmount = round2(totalServiceFee - listingAgentAmount - sellingAgentAmount);
+const agentsPool = Math.floor(totalServiceFee / 2);
+const half = Math.floor(agentsPool / 2);
+const agencyAmount = totalServiceFee - listingAgentAmount - sellingAgentAmount;
 ```
 
-This is cheaper than introducing a big-decimal library and is backed by unit tests.
+Non-integer inputs are rejected at two layers: the DTO (`@IsInt()`) and the service (`Number.isInteger` guard) — this catches accidental TL values slipping through as a regression.
 
 ### 1.6 Validation and error handling
 
