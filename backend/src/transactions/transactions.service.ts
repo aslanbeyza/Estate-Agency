@@ -6,10 +6,15 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Error as MongooseError, Model } from 'mongoose';
+import { Agent, AgentDocument } from '../agents/agent.schema';
 import { CommissionService } from '../commission/commission.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { UpdateStageDto } from './dto/update-stage.dto';
-import { Transaction, TransactionDocument, TransactionStage } from './transaction.schema';
+import {
+  Transaction,
+  TransactionDocument,
+  TransactionStage,
+} from './transaction.schema';
 
 const VALID_TRANSITIONS: Partial<Record<TransactionStage, TransactionStage>> = {
   [TransactionStage.AGREEMENT]: TransactionStage.EARNEST_MONEY,
@@ -17,38 +22,60 @@ const VALID_TRANSITIONS: Partial<Record<TransactionStage, TransactionStage>> = {
   [TransactionStage.TITLE_DEED]: TransactionStage.COMPLETED,
 };
 
-
-
 @Injectable()
 export class TransactionsService {
   constructor(
-    @InjectModel(Transaction.name) private transactionModel: Model<TransactionDocument>,
+    @InjectModel(Transaction.name)
+    private transactionModel: Model<TransactionDocument>,
+    @InjectModel(Agent.name) private agentModel: Model<AgentDocument>,
     private commissionService: CommissionService,
   ) {}
 
-  create(dto: CreateTransactionDto): Promise<TransactionDocument> {
+  async create(dto: CreateTransactionDto): Promise<TransactionDocument> {
+    // Integrity guard: both agent references must point at active (non-soft-
+    // deleted) agents. We check at create time only — existing transactions
+    // intentionally keep their references after an agent is soft-deleted so
+    // historical populate still resolves (see agent.schema.ts).
+    const agentIds = Array.from(new Set([dto.listingAgent, dto.sellingAgent]));
+    const activeAgents = await this.agentModel
+      .find({ _id: { $in: agentIds }, deletedAt: null })
+      .select('_id')
+      .lean()
+      .exec();
+
+    if (activeAgents.length !== agentIds.length) {
+      const activeIds = new Set(activeAgents.map((a) => String(a._id)));
+      const missing = agentIds.filter((id) => !activeIds.has(id));
+      throw new BadRequestException(
+        `Agent(s) not found or already deleted: ${missing.join(', ')}`,
+      );
+    }
+
     return new this.transactionModel(dto).save();
   }
 
   findAll(): Promise<TransactionDocument[]> {
     return this.transactionModel
       .find()
-      .populate('listingAgent', 'name email')
-      .populate('sellingAgent', 'name email')
+      .populate('listingAgent', 'name email deletedAt')
+      .populate('sellingAgent', 'name email deletedAt')
       .exec();
   }
 
   async findOne(id: string): Promise<TransactionDocument> {
     const tx = await this.transactionModel
       .findById(id)
-      .populate('listingAgent', 'name email')
-      .populate('sellingAgent', 'name email')
+      .populate('listingAgent', 'name email deletedAt')
+      .populate('sellingAgent', 'name email deletedAt')
       .exec();
     if (!tx) throw new NotFoundException(`Transaction ${id} not found`);
     return tx;
   }
 
-  async updateStage(id: string, dto: UpdateStageDto): Promise<TransactionDocument> {
+  async updateStage(
+    id: string,
+    dto: UpdateStageDto,
+  ): Promise<TransactionDocument> {
     const tx = await this.transactionModel.findById(id).exec();
     if (!tx) throw new NotFoundException(`Transaction ${id} not found`);
 

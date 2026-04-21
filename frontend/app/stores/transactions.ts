@@ -4,8 +4,8 @@ import type {
   Transaction,
   TransactionStage,
 } from '~/types';
+import { isPayoutReady } from '~/types';
 import { withLoading } from './helpers';
-import { isPayoutReady } from '~/utils/transaction';
 
 export type {
   AgentRef,

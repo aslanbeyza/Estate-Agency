@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { useAgentsStore } from '~/stores/agents'
-import { useTransactionsStore } from '~/stores/transactions'
-import { amountForAgent, roleOfAgent } from '~/utils/transaction'
 
 const agentStore = useAgentsStore()
-const txStore = useTransactionsStore()
-await Promise.all([agentStore.fetchAll(), txStore.fetchAll()])
+
+// The page is purely presentational now: all aggregates come from
+// `GET /agents/stats` and the selected-agent feed from
+// `GET /agents/:id/transactions`. No business rule runs in this file.
+await agentStore.fetchStats()
 
 const palette = [
   'bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400',
@@ -16,24 +17,27 @@ const palette = [
   'bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-400',
 ]
 
-const agentStats = computed(() =>
-  agentStore.agents.map(agent => {
-    const lCount = txStore.transactions.filter(t => t.listingAgent?._id === agent._id).length
-    const sCount = txStore.transactions.filter(t => t.sellingAgent?._id === agent._id).length
-    const done = txStore.transactions.filter(t =>
-      isPayoutReady(t) && roleOfAgent(t, agent._id) !== null
-    )
-    const earned = done.reduce((sum, t) => sum + (amountForAgent(t, agent._id) ?? 0), 0)
-    return { ...agent, lCount, sCount, doneCount: done.length, earned }
-  })
-)
+const agentStats = computed(() => agentStore.stats)
 
 const selectedId = ref<string | null>(null)
-const selectedStats = computed(() => agentStats.value.find(a => a._id === selectedId.value) ?? null)
-const selectedIdx = computed(() => agentStore.agents.findIndex(a => a._id === selectedId.value))
-const agentTx = computed(() =>
-  selectedId.value ? txStore.transactions.filter(t => t.listingAgent?._id === selectedId.value || t.sellingAgent?._id === selectedId.value) : []
+const selectedStats = computed(() =>
+  agentStats.value.find(a => a._id === selectedId.value) ?? null,
 )
+const selectedIdx = computed(() =>
+  agentStats.value.findIndex(a => a._id === selectedId.value),
+)
+
+const agentTx = computed(() =>
+  selectedId.value ? (agentStore.transactions[selectedId.value] ?? []) : [],
+)
+
+// Lazy-load the per-agent transaction feed the first time the user opens
+// their detail panel; subsequent clicks use the cached value in the store.
+watch(selectedId, async (id) => {
+  if (!id) return
+  if (agentStore.transactions[id]) return
+  await agentStore.fetchTransactions(id)
+})
 
 const { showForm, form, submitting, formError, submit, toggle } = useCrudForm({
   initial: { name: '', email: '', phone: '' },
@@ -113,21 +117,21 @@ const { showForm, form, submitting, formError, submit, toggle } = useCrudForm({
           </div>
           <div class="grid grid-cols-3 gap-1.5 text-center mb-3">
             <div class="bg-slate-50 dark:bg-slate-800 rounded-lg py-2">
-              <p class="text-base font-bold text-slate-800 dark:text-slate-100">{{ agent.lCount }}</p>
+              <p class="text-base font-bold text-slate-800 dark:text-slate-100">{{ agent.listingCount }}</p>
               <p class="text-xs text-slate-400 dark:text-slate-500">Portföy</p>
             </div>
             <div class="bg-slate-50 dark:bg-slate-800 rounded-lg py-2">
-              <p class="text-base font-bold text-slate-800 dark:text-slate-100">{{ agent.sCount }}</p>
+              <p class="text-base font-bold text-slate-800 dark:text-slate-100">{{ agent.sellingCount }}</p>
               <p class="text-xs text-slate-400 dark:text-slate-500">Satış</p>
             </div>
             <div class="bg-emerald-50 dark:bg-emerald-950/40 rounded-lg py-2">
-              <p class="text-base font-bold text-emerald-700 dark:text-emerald-400">{{ agent.doneCount }}</p>
+              <p class="text-base font-bold text-emerald-700 dark:text-emerald-400">{{ agent.completedCount }}</p>
               <p class="text-xs text-emerald-500 dark:text-emerald-600">Kapandı</p>
             </div>
           </div>
           <div class="pt-2.5 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
             <p class="text-xs text-slate-400 dark:text-slate-500">Toplam Kazanç</p>
-            <p class="font-bold text-indigo-600 dark:text-indigo-400 text-sm">{{ formatTRY(agent.earned) }}</p>
+            <p class="font-bold text-indigo-600 dark:text-indigo-400 text-sm">{{ formatTRY(agent.totalEarned) }}</p>
           </div>
         </div>
       </div>
@@ -153,19 +157,19 @@ const { showForm, form, submitting, formError, submit, toggle } = useCrudForm({
             </div>
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div class="bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-center">
-                <p class="text-2xl font-bold text-slate-800 dark:text-slate-100">{{ selectedStats.lCount }}</p>
+                <p class="text-2xl font-bold text-slate-800 dark:text-slate-100">{{ selectedStats.listingCount }}</p>
                 <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Portföy</p>
               </div>
               <div class="bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-center">
-                <p class="text-2xl font-bold text-slate-800 dark:text-slate-100">{{ selectedStats.sCount }}</p>
+                <p class="text-2xl font-bold text-slate-800 dark:text-slate-100">{{ selectedStats.sellingCount }}</p>
                 <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Satış</p>
               </div>
               <div class="bg-emerald-50 dark:bg-emerald-950/40 rounded-xl p-3 text-center">
-                <p class="text-2xl font-bold text-emerald-700 dark:text-emerald-400">{{ selectedStats.doneCount }}</p>
+                <p class="text-2xl font-bold text-emerald-700 dark:text-emerald-400">{{ selectedStats.completedCount }}</p>
                 <p class="text-xs text-emerald-600 dark:text-emerald-500 mt-1">Tamamlanan</p>
               </div>
               <div class="bg-indigo-50 dark:bg-indigo-950/40 rounded-xl p-3 text-center">
-                <p class="text-sm font-bold text-indigo-700 dark:text-indigo-400 leading-tight">{{ formatTRY(selectedStats.earned) }}</p>
+                <p class="text-sm font-bold text-indigo-700 dark:text-indigo-400 leading-tight">{{ formatTRY(selectedStats.totalEarned) }}</p>
                 <p class="text-xs text-indigo-500 dark:text-indigo-600 mt-1">Kazanç</p>
               </div>
             </div>
@@ -188,11 +192,9 @@ const { showForm, form, submitting, formError, submit, toggle } = useCrudForm({
                     <StageBadge :stage="t.stage" class="shrink-0" />
                   </div>
                   <div class="flex justify-between text-xs">
-                    <span class="text-slate-400 dark:text-slate-500">
-                      {{ selectedId ? ROLE_LABEL[roleOfAgent(t, selectedId)!] : '' }}
-                    </span>
-                    <span v-if="selectedId && amountForAgent(t, selectedId) !== null" class="font-semibold text-emerald-600 dark:text-emerald-400">
-                      {{ formatTRY(amountForAgent(t, selectedId)!) }}
+                    <span class="text-slate-400 dark:text-slate-500">{{ ROLE_LABEL[t.role] }}</span>
+                    <span v-if="t.amount !== null" class="font-semibold text-emerald-600 dark:text-emerald-400">
+                      {{ formatTRY(t.amount) }}
                     </span>
                     <span v-else class="text-slate-300 dark:text-slate-700">—</span>
                   </div>
@@ -211,14 +213,12 @@ const { showForm, form, submitting, formError, submit, toggle } = useCrudForm({
                     <tr v-for="t in agentTx" :key="t._id">
                       <td class="td"><NuxtLink :to="`/islemler/${t._id}`" class="link-primary text-xs leading-tight">{{ t.propertyAddress }}</NuxtLink></td>
                       <td class="td text-xs">
-                        <template v-if="selectedId">
-                          <span v-if="roleOfAgent(t, selectedId) === 'both'" class="text-amber-600 dark:text-amber-400 font-semibold">{{ ROLE_LABEL.both }}</span>
-                          <span v-else>{{ ROLE_LABEL[roleOfAgent(t, selectedId)!] }}</span>
-                        </template>
+                        <span v-if="t.role === 'both'" class="text-amber-600 dark:text-amber-400 font-semibold">{{ ROLE_LABEL.both }}</span>
+                        <span v-else>{{ ROLE_LABEL[t.role] }}</span>
                       </td>
                       <td class="td"><StageBadge :stage="t.stage" /></td>
                       <td class="td text-right font-semibold">
-                        <span v-if="selectedId && amountForAgent(t, selectedId) !== null" class="text-emerald-600 dark:text-emerald-400">{{ formatTRY(amountForAgent(t, selectedId)!) }}</span>
+                        <span v-if="t.amount !== null" class="text-emerald-600 dark:text-emerald-400">{{ formatTRY(t.amount) }}</span>
                         <span v-else class="text-slate-300 dark:text-slate-700">—</span>
                       </td>
                     </tr>

@@ -1,18 +1,21 @@
-import type { CommissionBreakdown, Transaction } from '~/types'
-
-export type AgentRoleInTransaction = 'listing' | 'selling' | 'both'
-
-export type PayoutReady = Transaction & { commissionBreakdown: CommissionBreakdown }
+import type { AgentRef, AgentRoleInTransaction } from '~/types'
 
 /**
- * "Komisyon ödeme için hazır" — tamamlanmış + breakdown gelmiş işlem.
- * Type guard olduğu için filter sonrası commissionBreakdown non-null kabul edilir.
+ * Presentation-only helpers for transactions.
+ *
+ * **Why this file is thin**: every business rule that used to live here —
+ * "is this transaction payout-ready?", "is this the same-agent scenario?",
+ * "what role does agent X play?", "what's agent X's share?" — has moved to
+ * the backend. The server now ships `isPayoutReady` / `isSameAgent` as
+ * virtuals on every transaction, and `GET /agents/:id/transactions` returns
+ * the per-agent role and amount pre-computed. This means commission-rule
+ * changes no longer require a frontend deploy.
+ *
+ * What stays here: UI strings and display formatting, which are genuinely a
+ * frontend concern (locale, branding, accessibility copy).
  */
-export function isPayoutReady(
-  tx: Pick<Transaction, 'stage' | 'commissionBreakdown'>,
-): tx is PayoutReady {
-  return tx.stage === 'completed' && !!tx.commissionBreakdown
-}
+
+export type { AgentRoleInTransaction } from '~/types'
 
 export const ROLE_LABEL: Record<AgentRoleInTransaction, string> = {
   listing: 'Portföy',
@@ -20,42 +23,11 @@ export const ROLE_LABEL: Record<AgentRoleInTransaction, string> = {
   both: 'Portföy + Satış',
 }
 
-function idOf(ref: Transaction['listingAgent'] | null | undefined): string | null {
-  if (!ref) return null
-  return (ref as any)._id ?? (ref as unknown as string) ?? null
-}
-
-export function isSameAgent(tx: Pick<Transaction, 'listingAgent' | 'sellingAgent'>): boolean {
-  const l = idOf(tx.listingAgent)
-  const s = idOf(tx.sellingAgent)
-  return !!l && !!s && l === s
-}
-
-export function roleOfAgent(
-  tx: Pick<Transaction, 'listingAgent' | 'sellingAgent'>,
-  agentId: string,
-): AgentRoleInTransaction | null {
-  const isListing = idOf(tx.listingAgent) === agentId
-  const isSelling = idOf(tx.sellingAgent) === agentId
-  if (isListing && isSelling) return 'both'
-  if (isListing) return 'listing'
-  if (isSelling) return 'selling'
-  return null
-}
-
 /**
- * Bir danışmanın bu işlemden hak ettiği komisyon miktarı.
- * commissionBreakdown yoksa (işlem tamamlanmamışsa) null döner.
- * Aynı danışman (both) senaryosunda backend listingAgentAmount'a tüm %50'yi koyar,
- * sellingAgentAmount = 0 olur; bu yüzden listing tarafını okumak yeterli.
+ * Display label for an agent reference. Adds "(silindi)" when the agent has
+ * been soft-deleted, so historical transactions make sense at a glance.
  */
-export function amountForAgent(
-  tx: Pick<Transaction, 'listingAgent' | 'sellingAgent' | 'commissionBreakdown'>,
-  agentId: string,
-): number | null {
-  if (!tx.commissionBreakdown) return null
-  const role = roleOfAgent(tx, agentId)
-  if (!role) return null
-  if (role === 'selling') return tx.commissionBreakdown.sellingAgentAmount
-  return tx.commissionBreakdown.listingAgentAmount
+export function agentLabel(ref?: AgentRef | null): string {
+  if (!ref) return '—'
+  return ref.deletedAt ? `${ref.name} (silindi)` : ref.name
 }

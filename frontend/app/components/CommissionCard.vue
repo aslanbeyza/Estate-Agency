@@ -9,6 +9,26 @@ const props = defineProps<{
 }>()
 
 const isSameAgent = computed(() => props.breakdown.scenario === 'same_agent')
+
+/**
+ * Percentage labels are derived from the actual amounts rather than hardcoded
+ * (`%50` / `%25`). This way:
+ *  - the UI automatically reflects whatever commission policy was active
+ *    when *this* transaction was paid out — historical records stay honest
+ *    even after the live rates change;
+ *  - the component stops being a second source of truth for the split.
+ */
+function pct(amount: number): string {
+  if (!props.totalServiceFee) return '—'
+  return `%${Math.round((amount / props.totalServiceFee) * 100)}`
+}
+
+const agencyPct = computed(() => pct(props.breakdown.agencyAmount))
+const listingPct = computed(() => pct(props.breakdown.listingAgentAmount))
+const sellingPct = computed(() => pct(props.breakdown.sellingAgentAmount))
+const poolPct = computed(() =>
+  pct(props.totalServiceFee - props.breakdown.agencyAmount),
+)
 </script>
 
 <template>
@@ -37,7 +57,7 @@ const isSameAgent = computed(() => props.breakdown.scenario === 'same_agent')
           <div class="w-8 h-8 md:w-9 md:h-9 rounded-xl bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center text-base">🏢</div>
           <div>
             <p class="font-semibold text-indigo-800 dark:text-indigo-200 text-sm">Ajans</p>
-            <p class="text-xs text-indigo-500 dark:text-indigo-400">%50</p>
+            <p class="text-xs text-indigo-500 dark:text-indigo-400">{{ agencyPct }}</p>
           </div>
         </div>
         <p class="text-lg md:text-xl font-bold text-indigo-700 dark:text-indigo-300">{{ formatTRY(breakdown.agencyAmount) }}</p>
@@ -52,13 +72,16 @@ const isSameAgent = computed(() => props.breakdown.scenario === 'same_agent')
             color-class="bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300"
           />
           <div>
-            <p class="font-semibold text-emerald-800 dark:text-emerald-200 text-sm">{{ listingAgent.name }}</p>
+            <p class="font-semibold text-emerald-800 dark:text-emerald-200 text-sm">
+              {{ listingAgent.name }}
+              <span v-if="listingAgent.deletedAt" class="ml-1 text-[10px] font-medium text-slate-400 dark:text-slate-500">(silindi)</span>
+            </p>
             <p class="text-xs text-emerald-600 dark:text-emerald-400">Portföy Danışmanı{{ isSameAgent ? ' + Satış' : '' }}</p>
           </div>
         </div>
         <div class="text-right">
           <p class="text-lg md:text-xl font-bold text-emerald-700 dark:text-emerald-300">{{ formatTRY(breakdown.listingAgentAmount) }}</p>
-          <p class="text-xs text-emerald-500">{{ isSameAgent ? '%50' : '%25' }}</p>
+          <p class="text-xs text-emerald-500">{{ listingPct }}</p>
         </div>
       </div>
 
@@ -72,20 +95,23 @@ const isSameAgent = computed(() => props.breakdown.scenario === 'same_agent')
             color-class="bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300"
           />
           <div>
-            <p class="font-semibold text-emerald-800 dark:text-emerald-200 text-sm">{{ sellingAgent.name }}</p>
+            <p class="font-semibold text-emerald-800 dark:text-emerald-200 text-sm">
+              {{ sellingAgent.name }}
+              <span v-if="sellingAgent.deletedAt" class="ml-1 text-[10px] font-medium text-slate-400 dark:text-slate-500">(silindi)</span>
+            </p>
             <p class="text-xs text-emerald-600 dark:text-emerald-400">Satış Danışmanı</p>
           </div>
         </div>
         <div class="text-right">
           <p class="text-lg md:text-xl font-bold text-emerald-700 dark:text-emerald-300">{{ formatTRY(breakdown.sellingAgentAmount) }}</p>
-          <p class="text-xs text-emerald-500">%25</p>
+          <p class="text-xs text-emerald-500">{{ sellingPct }}</p>
         </div>
       </div>
     </div>
     <p class="text-xs text-slate-400 dark:text-slate-500 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
       {{ isSameAgent
-        ? 'Senaryo 1: Aynı danışman — ajan havuzunun tamamı (%50) tek kişiye gitti.'
-        : 'Senaryo 2: Farklı danışmanlar — ajan havuzu (%50) eşit paylaşıldı.' }}
+        ? `Senaryo 1: Aynı danışman — ajan havuzunun tamamı (${poolPct}) tek kişiye gitti.`
+        : `Senaryo 2: Farklı danışmanlar — ajan havuzu (${poolPct}) eşit paylaşıldı.` }}
     </p>
   </div>
 </template>

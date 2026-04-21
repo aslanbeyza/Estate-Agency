@@ -20,6 +20,15 @@ export class AgentsController {
     return this.agentsService.findAll();
   }
 
+  @Get('stats')
+  @ApiOperation({
+    summary:
+      'List agents with aggregate stats (listing / selling / completed counts + totalEarned in kuruş)',
+  })
+  stats() {
+    return this.agentsService.stats();
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get an agent by id' })
   findOne(@Param('id') id: string) {
@@ -32,6 +41,15 @@ export class AgentsController {
   })
   earnings(@Param('id') id: string) {
     return this.agentsService.earnings(id);
+  }
+
+  @Get(':id/transactions')
+  @ApiOperation({
+    summary:
+      "Agent-scoped transaction feed with each item's role and payout amount pre-computed",
+  })
+  transactions(@Param('id') id: string) {
+    return this.agentsService.transactions(id);
   }
 
   @Delete(':id')

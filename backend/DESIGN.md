@@ -41,6 +41,16 @@ src/
 
 The same agent can appear as both `listingAgent` and `sellingAgent` (supports the "same agent" scenario).
 
+**Soft-delete for `Agent`.** Transactions reference agents by `ObjectId`, and `commissionBreakdown` is embedded as an immutable historical fact. Hard-deleting an agent would therefore leave every past transaction with a dangling reference — `populate('listingAgent')` would resolve to `null` and the UI would crash on `tx.listingAgent.name`. To keep historical data correct, `Agent` carries a nullable `deletedAt: Date` column instead:
+
+- `DELETE /agents/:id` sets `deletedAt = new Date()` (idempotent; re-deleting is a no-op).
+- `AgentsService.findAll` filters `{ deletedAt: null }` so the active roster is clean.
+- `AgentsService.findOne` and every `populate('listingAgent' | 'sellingAgent')` call **do not** filter — history must resolve. Populate selects include `deletedAt` so the frontend can tag these as `(silindi)` without an extra round-trip.
+- `TransactionsService.create` rejects any reference to a soft-deleted agent with `400 BadRequestException`. This keeps the invariant "every new transaction points at a live agent" while preserving old data.
+- The email `unique` index is re-declared as a **partial index over `{ deletedAt: null }`** so a soft-deleted agent keeps its row without blocking a fresh signup on the same email.
+
+Alternatives considered and rejected: a global Mongoose query middleware that filters `deletedAt` everywhere (too much magic; breaks history populate), a `mongoose-delete` plugin (extra dependency for a four-line behaviour), and per-collection archival tables (overkill for this scope and it would split the audit trail across two collections).
+
 ### 1.3 Where is the commission breakdown stored?
 
 The breakdown lives **embedded in the transaction document**, not in a separate collection.
@@ -145,6 +155,35 @@ Non-integer inputs are rejected at two layers: the DTO (`@IsInt()`) and the serv
   ```
   The frontend `useApi` composable relies on this contract to surface human-readable error toasts.
 
+### 1.6b Business logic stays on the server
+
+Every derived fact that depends on business rules is produced by the backend and consumed verbatim by the UI. Two mechanisms achieve this:
+
+1. **Mongoose virtuals on `Transaction`** — `isPayoutReady` (stage === completed ∧ breakdown present) and `isSameAgent` (listing and selling resolve to the same id) are declared on the schema and serialised via `toJSON: { virtuals: true }`. Every endpoint that returns a transaction automatically ships them. `__v` is hidden from the wire (it still drives optimistic concurrency in the DB).
+
+2. **Agent-lens DTOs on dedicated endpoints**:
+   - `GET /agents/stats` runs a single `$lookup` + `$filter` aggregation pipeline and returns each active agent augmented with `listingCount`, `sellingCount`, `completedCount`, `totalEarned` (integer kuruş). The frontend renders the response directly — no per-agent loops, no summing, no role detection.
+   - `GET /agents/:id/transactions` returns each transaction the agent participates in with the role (`listing` | `selling` | `both`) and the agent's own share pre-computed. Same-agent scenario is collapsed server-side so the UI never has to know that the agent pool lives on `listingAgentAmount` in that mode.
+
+Why: commission policies, payout rules and role-labelling are **business rules**, not presentation. If any of them changes tomorrow (e.g. "5% goes to a bonus pool before the 50/50 split") the backend is the only place that has to ship. The frontend imports one type definition, reads two flags and two numbers.
+
+What stays on the frontend: locale-bound UI strings (`ROLE_LABEL` Turkish map), display formatting (`formatTRY`, `agentLabel`'s `(silindi)` suffix) and input conversion (`toKurus`). These are genuine view-layer concerns.
+
+### 1.6c Commission policy — externalised and versioned per record
+
+Commission rates used to live as magic numbers inside `CommissionService` (agency `/ 2`, agents `/ 4`). Two problems with that: (a) changing the rate required a code deploy, and (b) once the number moved, historical transactions no longer matched the rule their breakdown was computed under — an audit nightmare.
+
+The refactor:
+
+- **Rates are basis points, not percentages.** `CommissionPolicy { agencyBps, listingAgentBps }` — 10 000 bps = 100 %. Integers only, same invariant as kuruş: no float drift when serialised, stored or compared.
+- **`CommissionPolicyService` reads from environment at startup.** `COMMISSION_AGENCY_BPS` (default 5000) and `COMMISSION_LISTING_AGENT_BPS` (default 5000, of the agent pool). Out-of-range or non-integer values throw at startup — no silent fallback, because a wrong split is worse than a crash in financial software.
+- **`CommissionService` calculates from the injected policy.** Existing invariants hold: `agencyAmount + listingAgentAmount + sellingAgentAmount === totalServiceFee`, agency absorbs the residue, same-agent scenario gives the full pool to the listing agent. Default policy produces identical numbers to the old hard-coded formulas — parity tests in `commission.service.spec.ts` protect this.
+- **Every breakdown records the policy used.** `CommissionBreakdown.policy` carries the `{ agencyBps, listingAgentBps }` snapshot. Because breakdowns are embedded in transactions and never mutated, a 2026-03-14 transaction will forever show the rates that paid it out even if the live policy moves to 60 / 20 / 20 in June.
+
+Why not put the rates in MongoDB now? Nothing in `CommissionService` depends on where `CommissionPolicyService` sourced the policy. When an admin UI becomes necessary, swap the `ConfigService` read for a cached `settings` collection read — callers and tests do not change. Keeping the source externalised via an interface is the whole point of the exercise; the env is simply the first (and simplest) implementation.
+
+The frontend displays percentages computed from `amount / totalServiceFee` on each breakdown. The UI never needs to know what the "current" rate is — the record tells its own story.
+
 ### 1.7 API surface
 
 | Method | Path                           | Purpose                                       |
@@ -153,10 +192,12 @@ Non-integer inputs are rejected at two layers: the DTO (`@IsInt()`) and the serv
 | GET    | `/health`                      | Liveness + mongo connectivity                 |
 | GET    | `/api/docs`                    | Swagger UI                                    |
 | POST   | `/agents`                      | Create agent                                  |
-| GET    | `/agents`                      | List agents                                   |
-| GET    | `/agents/:id`                  | Get one agent                                 |
-| GET    | `/agents/:id/earnings`         | Aggregated earnings across completed tx      |
-| DELETE | `/agents/:id`                  | Delete agent                                  |
+| GET    | `/agents`                      | List active agents                            |
+| GET    | `/agents/stats`                | Agents + aggregate counts + total earnings    |
+| GET    | `/agents/:id`                  | Get one agent (incl. soft-deleted)            |
+| GET    | `/agents/:id/earnings`         | Aggregated earnings across completed tx       |
+| GET    | `/agents/:id/transactions`     | Agent-lens transaction feed (role + amount)   |
+| DELETE | `/agents/:id`                  | Soft-delete agent (idempotent)                |
 | POST   | `/transactions`                | Create transaction (starts at `agreement`)    |
 | GET    | `/transactions`                | List all (agents populated)                   |
 | GET    | `/transactions/:id`            | Get one (agents populated)                    |
@@ -168,11 +209,12 @@ Non-integer inputs are rejected at two layers: the DTO (`@IsInt()`) and the serv
 
 Jest unit tests cover:
 - `CommissionService` — §4.3 scenarios 1 & 2, edge cases (fee=0, negative fee, float drift), sum invariant on odd fees.
-- `TransactionsService` — every valid transition, invalid transitions (`400`), terminal state guard, missing transaction (`404`), breakdown fetch before / after completion, optimistic-concurrency collision (`409` on `VersionError`), passthrough of unrelated save errors.
-- `AgentsService` — `findOne` happy/missing, `remove` happy/missing, `earnings` aggregation across mixed same-agent and different-agent completed transactions.
+- `TransactionsService` — every valid transition, invalid transitions (`400`), terminal state guard, missing transaction (`404`), breakdown fetch before / after completion, optimistic-concurrency collision (`409` on `VersionError`), passthrough of unrelated save errors, and **create-time soft-delete integrity** (accepts two active agents, rejects any soft-deleted reference with `400`, collapses same-agent to a single lookup).
+- `AgentsService` — `findAll` filters `deletedAt: null`, `findOne` still resolves soft-deleted rows (so populate history works), `remove` soft-deletes on first call and is idempotent on second, missing id still throws `404`, `earnings` aggregation across mixed same-agent and different-agent completed transactions, `stats` delegates to the aggregation pipeline and enforces the `deletedAt: null` match stage, `transactions` projects role + amount (`listing`, `both`, `null` while not yet payout-ready) and keeps working for soft-deleted agents so their history stays accessible.
+- `Transaction` schema virtuals — `isPayoutReady` is false until `stage = completed` **and** the breakdown has been populated; `isSameAgent` compares populated / raw refs; JSON output ships both virtuals and hides `__v`.
 - `AppController` — metadata root.
 
-Total: **24 unit tests** across 4 suites, all green (`npm test`).
+Total: **44 unit tests** across 5 suites, all green (`npm test`).
 
 ---
 

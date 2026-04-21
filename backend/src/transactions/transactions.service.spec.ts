@@ -5,6 +5,10 @@ import {
 } from '@nestjs/common';
 import { Error as MongooseError } from 'mongoose';
 import { CommissionService } from '../commission/commission.service';
+import {
+  CommissionPolicyService,
+  DEFAULT_COMMISSION_POLICY,
+} from '../commission/commission.policy';
 import { TransactionStage } from './transaction.schema';
 import { TransactionsService } from './transactions.service';
 
@@ -27,20 +31,37 @@ const mockTransactionModel = {
   save: mockSave,
 };
 
+const mockAgentModel = {
+  find: jest.fn(),
+};
+
+// Minimal stub: the stage-transition tests don't care about the policy, only
+// that CommissionService can be constructed and called. Using the default
+// policy keeps every existing assertion numerically stable.
+const stubPolicyService = {
+  current: () => ({ ...DEFAULT_COMMISSION_POLICY }),
+} as unknown as CommissionPolicyService;
+
 describe('TransactionsService — Stage Geçişleri', () => {
   let service: TransactionsService;
   let commissionService: CommissionService;
 
   beforeEach(() => {
-    commissionService = new CommissionService();
-    service = new TransactionsService(mockTransactionModel as any, commissionService);
+    commissionService = new CommissionService(stubPolicyService);
+    service = new TransactionsService(
+      mockTransactionModel as any,
+      mockAgentModel as any,
+      commissionService,
+    );
     jest.clearAllMocks();
     mockSave.mockResolvedValue({});
   });
 
   it('agreement → earnest_money geçişine izin vermeli', async () => {
     const tx = mockTransaction({ stage: TransactionStage.AGREEMENT });
-    mockTransactionModel.findById.mockReturnValue({ exec: () => Promise.resolve(tx) });
+    mockTransactionModel.findById.mockReturnValue({
+      exec: () => Promise.resolve(tx),
+    });
 
     await service.updateStage('tx1', { stage: TransactionStage.EARNEST_MONEY });
     expect(tx.stage).toBe(TransactionStage.EARNEST_MONEY);
@@ -48,7 +69,9 @@ describe('TransactionsService — Stage Geçişleri', () => {
 
   it('earnest_money → title_deed geçişine izin vermeli', async () => {
     const tx = mockTransaction({ stage: TransactionStage.EARNEST_MONEY });
-    mockTransactionModel.findById.mockReturnValue({ exec: () => Promise.resolve(tx) });
+    mockTransactionModel.findById.mockReturnValue({
+      exec: () => Promise.resolve(tx),
+    });
 
     await service.updateStage('tx1', { stage: TransactionStage.TITLE_DEED });
     expect(tx.stage).toBe(TransactionStage.TITLE_DEED);
@@ -56,7 +79,9 @@ describe('TransactionsService — Stage Geçişleri', () => {
 
   it('title_deed → completed geçişinde komisyon hesaplamalı', async () => {
     const tx = mockTransaction({ stage: TransactionStage.TITLE_DEED });
-    mockTransactionModel.findById.mockReturnValue({ exec: () => Promise.resolve(tx) });
+    mockTransactionModel.findById.mockReturnValue({
+      exec: () => Promise.resolve(tx),
+    });
 
     await service.updateStage('tx1', { stage: TransactionStage.COMPLETED });
     expect(tx.commissionBreakdown).toBeDefined();
@@ -65,7 +90,9 @@ describe('TransactionsService — Stage Geçişleri', () => {
 
   it('geçersiz geçiş (agreement → completed) BadRequestException fırlatmalı', async () => {
     const tx = mockTransaction({ stage: TransactionStage.AGREEMENT });
-    mockTransactionModel.findById.mockReturnValue({ exec: () => Promise.resolve(tx) });
+    mockTransactionModel.findById.mockReturnValue({
+      exec: () => Promise.resolve(tx),
+    });
 
     await expect(
       service.updateStage('tx1', { stage: TransactionStage.COMPLETED }),
@@ -74,7 +101,9 @@ describe('TransactionsService — Stage Geçişleri', () => {
 
   it('completed → herhangi bir stage geçişi BadRequestException fırlatmalı', async () => {
     const tx = mockTransaction({ stage: TransactionStage.COMPLETED });
-    mockTransactionModel.findById.mockReturnValue({ exec: () => Promise.resolve(tx) });
+    mockTransactionModel.findById.mockReturnValue({
+      exec: () => Promise.resolve(tx),
+    });
 
     await expect(
       service.updateStage('tx1', { stage: TransactionStage.TITLE_DEED }),
@@ -125,12 +154,108 @@ describe('TransactionsService — Stage Geçişleri', () => {
   });
 });
 
-describe('TransactionsService — Breakdown', () => {
+describe('TransactionsService — Create (soft-delete integrity)', () => {
   let service: TransactionsService;
-  const commissionService = new CommissionService();
+
+  const mockActiveAgents = (ids: string[]) => {
+    mockAgentModel.find.mockReturnValue({
+      select: () => ({
+        lean: () => ({
+          exec: () => Promise.resolve(ids.map((id) => ({ _id: id }))),
+        }),
+      }),
+    });
+  };
 
   beforeEach(() => {
-    service = new TransactionsService(mockTransactionModel as any, commissionService);
+    service = new TransactionsService(
+      mockTransactionModel as any,
+      mockAgentModel as any,
+      new CommissionService(stubPolicyService),
+    );
+    jest.clearAllMocks();
+  });
+
+  it('iki aktif ajanla oluşturulabilir', async () => {
+    const dto = {
+      propertyAddress: 'Moda Sok',
+      totalServiceFee: 10_000_000,
+      listingAgent: 'listing1',
+      sellingAgent: 'selling1',
+    };
+    mockActiveAgents(['listing1', 'selling1']);
+
+    // `new this.transactionModel(dto).save()` çağrısını mockla
+    const saveSpy = jest.fn().mockResolvedValue({ _id: 'newTx', ...dto });
+    const TxCtor = jest.fn().mockImplementation(() => ({ save: saveSpy }));
+    (service as any).transactionModel = Object.assign(
+      TxCtor,
+      mockTransactionModel,
+    );
+    (service as any).agentModel = mockAgentModel;
+
+    await service.create(dto);
+
+    expect(mockAgentModel.find).toHaveBeenCalledWith({
+      _id: { $in: ['listing1', 'selling1'] },
+      deletedAt: null,
+    });
+    expect(TxCtor).toHaveBeenCalledWith(dto);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('silinmiş ajan referansı BadRequestException fırlatmalı', async () => {
+    const dto = {
+      propertyAddress: 'Moda Sok',
+      totalServiceFee: 10_000_000,
+      listingAgent: 'listing1',
+      sellingAgent: 'deletedOne',
+    };
+    // Sadece listing aktif dönüyor; sellingAgent soft-deleted → filter'dan düşüyor.
+    mockActiveAgents(['listing1']);
+
+    await expect(service.create(dto)).rejects.toMatchObject({
+      message: expect.stringContaining('deletedOne'),
+      name: 'BadRequestException',
+    });
+  });
+
+  it('aynı ajan hem listing hem selling ise tek aktif kontrolü yeterli', async () => {
+    const dto = {
+      propertyAddress: 'Moda Sok',
+      totalServiceFee: 10_000_000,
+      listingAgent: 'soloAgent',
+      sellingAgent: 'soloAgent',
+    };
+    mockActiveAgents(['soloAgent']);
+
+    const saveSpy = jest.fn().mockResolvedValue({ _id: 'newTx', ...dto });
+    const TxCtor = jest.fn().mockImplementation(() => ({ save: saveSpy }));
+    (service as any).transactionModel = Object.assign(
+      TxCtor,
+      mockTransactionModel,
+    );
+    (service as any).agentModel = mockAgentModel;
+
+    await service.create(dto);
+
+    expect(mockAgentModel.find).toHaveBeenCalledWith({
+      _id: { $in: ['soloAgent'] },
+      deletedAt: null,
+    });
+  });
+});
+
+describe('TransactionsService — Breakdown', () => {
+  let service: TransactionsService;
+  const commissionService = new CommissionService(stubPolicyService);
+
+  beforeEach(() => {
+    service = new TransactionsService(
+      mockTransactionModel as any,
+      mockAgentModel as any,
+      commissionService,
+    );
     jest.clearAllMocks();
   });
 
@@ -145,7 +270,9 @@ describe('TransactionsService — Breakdown', () => {
       }),
     });
 
-    await expect(service.getBreakdown('tx1')).rejects.toThrow(BadRequestException);
+    await expect(service.getBreakdown('tx1')).rejects.toThrow(
+      BadRequestException,
+    );
   });
 
   it('completed transaction için breakdown payload döndürür', async () => {

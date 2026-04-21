@@ -140,10 +140,10 @@ const { showForm, form, submitting, formError, submit, toggle } = useCrudForm({
             </div>
             <div class="flex items-center justify-between text-xs">
               <div class="text-slate-400 dark:text-slate-500 space-y-0.5">
-                <p>Portföy: <span class="text-slate-600 dark:text-slate-300 font-medium">{{ tx.listingAgent?.name ?? '—' }}</span></p>
+                <p>Portföy: <span class="text-slate-600 dark:text-slate-300 font-medium">{{ agentLabel(tx.listingAgent) }}</span></p>
                 <p>Satış:
-                  <span class="font-medium" :class="isSameAgent(tx) ? 'text-amber-600 dark:text-amber-400' : 'text-slate-600 dark:text-slate-300'">
-                    {{ tx.sellingAgent?.name ?? '—' }}{{ isSameAgent(tx) ? ' (aynı)' : '' }}
+                  <span class="font-medium" :class="tx.isSameAgent ? 'text-amber-600 dark:text-amber-400' : 'text-slate-600 dark:text-slate-300'">
+                    {{ agentLabel(tx.sellingAgent) }}{{ tx.isSameAgent ? ' (aynı)' : '' }}
                   </span>
                 </p>
               </div>
@@ -173,10 +173,10 @@ const { showForm, form, submitting, formError, submit, toggle } = useCrudForm({
                 <td class="td"><NuxtLink :to="`/islemler/${tx._id}`" class="link-primary">{{ tx.propertyAddress }}</NuxtLink></td>
                 <td class="td font-semibold text-slate-800 dark:text-slate-100">{{ formatTRY(tx.totalServiceFee) }}</td>
                 <td class="td"><StageBadge :stage="tx.stage" /></td>
-                <td class="td text-slate-600 dark:text-slate-300">{{ tx.listingAgent?.name ?? '—' }}</td>
+                <td class="td text-slate-600 dark:text-slate-300">{{ agentLabel(tx.listingAgent) }}</td>
                 <td class="td">
-                  <span v-if="isSameAgent(tx)" class="text-amber-600 dark:text-amber-400 font-medium text-xs">{{ tx.sellingAgent?.name }} <span class="opacity-60">(aynı)</span></span>
-                  <span v-else class="text-slate-600 dark:text-slate-300">{{ tx.sellingAgent?.name ?? '—' }}</span>
+                  <span v-if="tx.isSameAgent" class="text-amber-600 dark:text-amber-400 font-medium text-xs">{{ agentLabel(tx.sellingAgent) }} <span class="opacity-60">(aynı)</span></span>
+                  <span v-else class="text-slate-600 dark:text-slate-300">{{ agentLabel(tx.sellingAgent) }}</span>
                 </td>
                 <td class="td text-xs text-slate-400 dark:text-slate-500">{{ formatDate(tx.createdAt) }}</td>
               </tr>

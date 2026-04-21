@@ -34,7 +34,7 @@ async function advanceStage() {
   } finally { advancing.value = false }
 }
 
-const sameAgent = computed(() => (tx.value ? isSameAgent(tx.value) : false))
+const sameAgent = computed(() => tx.value?.isSameAgent ?? false)
 </script>
 
 <template>

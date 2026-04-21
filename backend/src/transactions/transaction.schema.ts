@@ -1,8 +1,27 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import { Document, HydratedDocument, Types } from 'mongoose';
 import { CommissionBreakdown } from '../commission/commission.service';
 
 export type TransactionDocument = Transaction & Document;
+
+/**
+ * Resolves the id of an agent reference regardless of whether the field is
+ * still a raw ObjectId or has been populated into an Agent document. Kept
+ * local to the virtual below because this is the only place that needs it.
+ */
+function refId(ref: unknown): string | null {
+  if (!ref) return null;
+  if (ref instanceof Types.ObjectId) return ref.toString();
+  if (typeof ref === 'string') return ref;
+  if (typeof ref === 'object' && ref !== null && '_id' in ref) {
+    const inner = (ref as { _id: unknown })._id;
+    if (!inner) return null;
+    if (inner instanceof Types.ObjectId) return inner.toString();
+    if (typeof inner === 'string') return inner;
+    return null;
+  }
+  return null;
+}
 
 export enum TransactionStage {
   AGREEMENT = 'agreement',
@@ -52,3 +71,32 @@ export class Transaction {
 }
 
 export const TransactionSchema = SchemaFactory.createForClass(Transaction);
+
+/**
+ * Derived flags exposed to the API so the frontend never has to re-implement
+ * business rules. They live as Mongoose virtuals so every endpoint that
+ * returns a transaction ships them automatically, and there is a single
+ * source of truth for "what counts as payout-ready" and "is this the
+ * same-agent scenario".
+ */
+TransactionSchema.virtual('isPayoutReady').get(function (
+  this: HydratedDocument<Transaction>,
+) {
+  return (
+    this.stage === TransactionStage.COMPLETED && !!this.commissionBreakdown
+  );
+});
+
+TransactionSchema.virtual('isSameAgent').get(function (
+  this: HydratedDocument<Transaction>,
+) {
+  const l = refId(this.listingAgent);
+  const s = refId(this.sellingAgent);
+  return !!l && !!s && l === s;
+});
+
+// Serialise virtuals on every JSON response and keep the string `id` helper
+// Mongoose already gives us. `versionKey: false` hides __v from the wire —
+// it still exists in the DB and drives optimistic concurrency.
+TransactionSchema.set('toJSON', { virtuals: true, versionKey: false });
+TransactionSchema.set('toObject', { virtuals: true });

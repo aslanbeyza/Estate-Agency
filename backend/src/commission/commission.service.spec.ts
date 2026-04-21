@@ -1,14 +1,27 @@
 import { CommissionService } from './commission.service';
+import {
+  CommissionPolicy,
+  CommissionPolicyService,
+  DEFAULT_COMMISSION_POLICY,
+} from './commission.policy';
 
 /**
  * All amounts are integer kuruş (1 TRY = 100 kuruş).
  * e.g. 15_000_000 kuruş = ₺150.000,00
  */
-describe('CommissionService', () => {
+
+function makeService(policy: CommissionPolicy = DEFAULT_COMMISSION_POLICY) {
+  const stub: CommissionPolicyService = {
+    current: () => ({ ...policy }),
+  } as unknown as CommissionPolicyService;
+  return new CommissionService(stub);
+}
+
+describe('CommissionService — default policy (50 / 25 / 25)', () => {
   let service: CommissionService;
 
   beforeEach(() => {
-    service = new CommissionService();
+    service = makeService();
   });
 
   describe('Scenario 1 — Same agent (listing == selling)', () => {
@@ -58,8 +71,6 @@ describe('CommissionService', () => {
     });
 
     it('residue is at most a few kuruş (< 4)', () => {
-      // Worst case for different_agents: residue = totalServiceFee - 2*floor(floor(fee/2)/2)
-      // which is 0..3 kuruş depending on fee mod 4.
       for (const fee of [0, 1, 2, 3, 4, 5, 99, 100, 101, 102, 103]) {
         const r = service.calculate(fee, 'a', 'b');
         expect(
@@ -67,7 +78,6 @@ describe('CommissionService', () => {
         ).toBe(fee);
         const residue =
           r.agencyAmount - (r.listingAgentAmount + r.sellingAgentAmount);
-        // Strictly non-negative (agency never loses to residue).
         expect(residue).toBeGreaterThanOrEqual(0);
       }
     });
@@ -99,5 +109,61 @@ describe('CommissionService', () => {
         'different_agents',
       );
     });
+  });
+
+  describe('Policy snapshot', () => {
+    it('embeds the active policy in every breakdown for audit trail', () => {
+      const result = service.calculate(10_000_000, 'a', 'b');
+      expect(result.policy).toEqual({
+        agencyBps: 5_000,
+        listingAgentBps: 5_000,
+      });
+    });
+  });
+});
+
+describe('CommissionService — custom policy (60 / 24 / 16 different-agent)', () => {
+  // Agency takes 60%; of the remaining 40% pool, listing gets 60% and selling 40%.
+  // i.e. of total: agency=60, listing=24, selling=16.
+  const service = makeService({ agencyBps: 6_000, listingAgentBps: 6_000 });
+
+  it('uses the configured split on 10m kuruş (different agents)', () => {
+    const result = service.calculate(10_000_000, 'a', 'b');
+    expect(result.agencyAmount).toBe(6_000_000);
+    expect(result.listingAgentAmount).toBe(2_400_000);
+    expect(result.sellingAgentAmount).toBe(1_600_000);
+    expect(result.policy).toEqual({ agencyBps: 6_000, listingAgentBps: 6_000 });
+  });
+
+  it('same-agent scenario: listing receives the entire pool regardless of listingBps', () => {
+    const result = service.calculate(10_000_000, 'solo', 'solo');
+    expect(result.agencyAmount).toBe(6_000_000);
+    // Pool = 40% of 10m = 4m; all of it to the solo agent.
+    expect(result.listingAgentAmount).toBe(4_000_000);
+    expect(result.sellingAgentAmount).toBe(0);
+  });
+
+  it('still preserves the sum invariant on awkward fees', () => {
+    for (const fee of [0, 1, 7, 13, 99, 123, 999_999]) {
+      const r = service.calculate(fee, 'a', 'b');
+      expect(r.agencyAmount + r.listingAgentAmount + r.sellingAgentAmount).toBe(
+        fee,
+      );
+      expect(
+        r.agencyAmount >=
+          Math.floor((fee * (10_000 - 6_000)) / 10_000) -
+            (r.listingAgentAmount + r.sellingAgentAmount),
+      ).toBe(true);
+    }
+  });
+});
+
+describe('CommissionService — agency-only policy (100 / 0 / 0)', () => {
+  it('an agency that keeps everything pays agents zero', () => {
+    const service = makeService({ agencyBps: 10_000, listingAgentBps: 5_000 });
+    const result = service.calculate(10_000_000, 'a', 'b');
+    expect(result.agencyAmount).toBe(10_000_000);
+    expect(result.listingAgentAmount).toBe(0);
+    expect(result.sellingAgentAmount).toBe(0);
   });
 });

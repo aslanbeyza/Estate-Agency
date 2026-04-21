@@ -79,7 +79,7 @@ const activeCount = computed(() => txStore.transactions.filter(t => t.stage !== 
               <StageBadge :stage="tx.stage" class="shrink-0" />
             </div>
             <div class="flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
-              <span>{{ tx.listingAgent?.name }}</span>
+              <span>{{ agentLabel(tx.listingAgent) }}</span>
               <span class="font-semibold text-slate-700 dark:text-slate-200">{{ formatTRY(tx.totalServiceFee) }}</span>
             </div>
           </div>
@@ -103,8 +103,8 @@ const activeCount = computed(() => txStore.transactions.filter(t => t.stage !== 
                 <td class="td"><NuxtLink :to="`/islemler/${tx._id}`" class="link-primary">{{ tx.propertyAddress }}</NuxtLink></td>
                 <td class="td font-semibold text-slate-700 dark:text-slate-200">{{ formatTRY(tx.totalServiceFee) }}</td>
                 <td class="td"><StageBadge :stage="tx.stage" /></td>
-                <td class="td">{{ tx.listingAgent?.name ?? '—' }}</td>
-                <td class="td">{{ tx.sellingAgent?.name ?? '—' }}</td>
+                <td class="td">{{ agentLabel(tx.listingAgent) }}</td>
+                <td class="td">{{ agentLabel(tx.sellingAgent) }}</td>
                 <td class="td text-xs text-slate-400 dark:text-slate-500">{{ formatDate(tx.createdAt) }}</td>
               </tr>
             </tbody>

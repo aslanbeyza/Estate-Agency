@@ -25,11 +25,18 @@ const descText = computed(() =>
     <div class="flex items-center gap-3 mb-2">
       <AgentAvatar :name="agent.name" :color-class="avatarClass" />
       <div>
-        <p class="font-semibold text-slate-800 dark:text-slate-100 text-sm">{{ agent.name }}</p>
+        <p class="font-semibold text-slate-800 dark:text-slate-100 text-sm">
+          {{ agent.name }}
+          <span v-if="agent.deletedAt" class="ml-1 text-[10px] font-medium text-slate-400 dark:text-slate-500">(silindi)</span>
+        </p>
         <p class="text-xs text-slate-400 dark:text-slate-500">{{ agent.email }}</p>
       </div>
     </div>
-    <p v-if="isSame" class="alert alert-warning text-xs">
+    <p v-if="agent.deletedAt" class="alert alert-warning text-xs">
+      Bu danışman sistemden kaldırılmış. İşlemin tarihî kaydı değişmez;
+      yeni bir işlem bu danışmana atanamaz.
+    </p>
+    <p v-else-if="isSame" class="alert alert-warning text-xs">
       ⚡ Portföy danışmanıyla aynı kişi
     </p>
     <p v-else class="text-xs text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800 rounded-lg px-2.5 py-2">
