@@ -1,8 +1,7 @@
 import {
   isCorsOriginAllowed,
   parseAllowedOrigins,
-  trustedVercelProjectSlugs,
-  vercelProjectSlugFromHostname,
+  vercelHostsShareSameProject,
 } from './main';
 
 /**
@@ -37,21 +36,41 @@ describe('parseAllowedOrigins', () => {
   });
 });
 
-describe('vercelProjectSlugFromHostname', () => {
-  it('parses production and preview hostnames', () => {
-    expect(vercelProjectSlugFromHostname('estate-agency-ay4u.vercel.app')).toBe(
-      'estate-agency-ay4u',
-    );
-    expect(
-      vercelProjectSlugFromHostname(
-        'estate-agency-ay4u-git-main-beyzaaslans-projects.vercel.app',
-      ),
-    ).toBe('estate-agency-ay4u');
+describe('vercelHostsShareSameProject', () => {
+  const prod = 'estate-agency-ay4u.vercel.app';
+
+  it('matches exact host', () => {
+    expect(vercelHostsShareSameProject(prod, prod)).toBe(true);
   });
 
-  it('returns null for non-Vercel hosts', () => {
-    expect(vercelProjectSlugFromHostname('localhost')).toBeNull();
-    expect(vercelProjectSlugFromHostname('app.example.com')).toBeNull();
+  it('matches classic -git- preview hostnames', () => {
+    expect(
+      vercelHostsShareSameProject(
+        'estate-agency-ay4u-git-main-beyzaaslans-projects.vercel.app',
+        prod,
+      ),
+    ).toBe(true);
+  });
+
+  it('matches hash-style Vercel deployment preview hostnames', () => {
+    expect(
+      vercelHostsShareSameProject(
+        'estate-agency-banhwly0t-beyzaaslans-projects.vercel.app',
+        prod,
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects same segment count impersonation', () => {
+    expect(
+      vercelHostsShareSameProject('estate-agency-evil.vercel.app', prod),
+    ).toBe(false);
+  });
+
+  it('rejects unrelated Vercel projects', () => {
+    expect(
+      vercelHostsShareSameProject('evil-copy-git-main-x.vercel.app', prod),
+    ).toBe(false);
   });
 });
 
@@ -64,10 +83,19 @@ describe('isCorsOriginAllowed', () => {
     ).toBe(true);
   });
 
-  it('allows Vercel preview when production URL is on the allow-list', () => {
+  it('allows -git- preview when production URL is on the allow-list', () => {
     expect(
       isCorsOriginAllowed(
         'https://estate-agency-ay4u-git-main-beyzaaslans-projects.vercel.app',
+        list,
+      ),
+    ).toBe(true);
+  });
+
+  it('allows hash-style preview URLs (no -git- in hostname)', () => {
+    expect(
+      isCorsOriginAllowed(
+        'https://estate-agency-banhwly0t-beyzaaslans-projects.vercel.app',
         list,
       ),
     ).toBe(true);
@@ -81,18 +109,5 @@ describe('isCorsOriginAllowed', () => {
 
   it('allows missing Origin (non-browser clients)', () => {
     expect(isCorsOriginAllowed(undefined, list)).toBe(true);
-  });
-});
-
-describe('trustedVercelProjectSlugs', () => {
-  it('collects slug from production or preview allow-list entries', () => {
-    expect([
-      ...trustedVercelProjectSlugs(['https://estate-agency-ay4u.vercel.app']),
-    ]).toEqual(['estate-agency-ay4u']);
-    expect([
-      ...trustedVercelProjectSlugs([
-        'https://estate-agency-ay4u-git-main-beyzaaslans-projects.vercel.app',
-      ]),
-    ]).toEqual(['estate-agency-ay4u']);
   });
 });

@@ -30,35 +30,56 @@ export function parseAllowedOrigins(raw: string | undefined): string[] {
 
 const VERCEL_HOST_SUFFIX = '.vercel.app';
 
-/**
- * Vercel production host is `{project}.vercel.app`; branch previews are
- * `{project}-git-{branch}-{team}.vercel.app`. We derive a stable project
- * slug so one `FRONTEND_ORIGIN` entry (production URL) also authorises
- * preview deployments without pasting every preview URL into Render.
- */
-export function vercelProjectSlugFromHostname(hostname: string): string | null {
+function vercelHostnameStem(hostname: string): string | null {
   if (!hostname.endsWith(VERCEL_HOST_SUFFIX)) return null;
-  const withoutSuffix = hostname.slice(0, -VERCEL_HOST_SUFFIX.length);
-  if (withoutSuffix.includes('-git-')) {
-    return withoutSuffix.split('-git-')[0] ?? null;
-  }
-  return withoutSuffix || null;
+  return hostname.slice(0, -VERCEL_HOST_SUFFIX.length);
 }
 
-export function trustedVercelProjectSlugs(
-  allowedOrigins: string[],
-): Set<string> {
-  const slugs = new Set<string>();
+/**
+ * True when `requestHost` is the same Vercel project as `listedHost`
+ * (production URL you put in `FRONTEND_ORIGIN`).
+ *
+ * Vercel uses several preview hostname shapes, e.g.
+ * `{project}-git-{branch}-{team}.vercel.app` and
+ * `{project}-{hash}-{team}.vercel.app` — we cannot rely on `-git-` only.
+ * We require the preview stem to share the production prefix and to have
+ * strictly more `-` segments so `estate-agency-evil` does not match
+ * `estate-agency-ay4u`.
+ */
+export function vercelHostsShareSameProject(
+  requestHost: string,
+  listedHost: string,
+): boolean {
+  const a = vercelHostnameStem(requestHost);
+  const b = vercelHostnameStem(listedHost);
+  if (a === null || b === null) return false;
+  if (a === b) return true;
+
+  const aParts = a.split('-');
+  const bParts = b.split('-');
+
+  if (bParts.length === 1) {
+    return a.startsWith(`${b}-`) && aParts.length >= 3;
+  }
+
+  const lastDash = b.lastIndexOf('-');
+  const prefix = lastDash >= 0 ? b.slice(0, lastDash + 1) : `${b}-`;
+  if (!a.startsWith(prefix)) return false;
+
+  return aParts.length > bParts.length;
+}
+
+function listedVercelHosts(allowedOrigins: string[]): string[] {
+  const hosts: string[] = [];
   for (const o of allowedOrigins) {
     try {
       const host = new URL(o).hostname;
-      const slug = vercelProjectSlugFromHostname(host);
-      if (slug) slugs.add(slug);
+      if (host.endsWith(VERCEL_HOST_SUFFIX)) hosts.push(host);
     } catch {
-      /* ignore malformed URLs in the allow-list */
+      /* skip */
     }
   }
-  return slugs;
+  return hosts;
 }
 
 /** Whether `origin` may call this API from a browser (CORS). */
@@ -70,9 +91,15 @@ export function isCorsOriginAllowed(
   if (allowedOrigins.includes(origin)) return true;
   try {
     const host = new URL(origin).hostname;
-    const slug = vercelProjectSlugFromHostname(host);
-    if (!slug) return false;
-    return trustedVercelProjectSlugs(allowedOrigins).has(slug);
+    for (const o of allowedOrigins) {
+      try {
+        const listedHost = new URL(o).hostname;
+        if (vercelHostsShareSameProject(host, listedHost)) return true;
+      } catch {
+        continue;
+      }
+    }
+    return false;
   } catch {
     return false;
   }
@@ -97,7 +124,7 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter());
 
   const allowedOrigins = parseAllowedOrigins(process.env.FRONTEND_ORIGIN);
-  const vercelSlugs = trustedVercelProjectSlugs(allowedOrigins);
+  const vercelListed = listedVercelHosts(allowedOrigins);
   app.enableCors({
     origin: (
       origin: string | undefined,
@@ -116,8 +143,8 @@ async function bootstrap() {
   });
   Logger.log(
     `CORS allow-list: ${allowedOrigins.join(', ')}` +
-      (vercelSlugs.size > 0
-        ? `; Vercel previews also allowed for slug(s): ${[...vercelSlugs].join(', ')}`
+      (vercelListed.length > 0
+        ? `; sibling *.vercel.app deployment URLs allowed for: ${vercelListed.join(', ')}`
         : ''),
     'Bootstrap',
   );

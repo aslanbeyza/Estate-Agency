@@ -36,7 +36,7 @@ services:
       - key: JWT_EXPIRES_IN
         value: 12h
       # Production Vercel URL is enough — same-project preview deploys
-      # (`*-git-*-*.vercel.app`) are accepted automatically. Custom domains
-      # must still be listed explicitly if used.
+      # (`*-git-*-*.vercel.app`, `*-<hash>-<team>.vercel.app`, etc.) are
+      # accepted automatically. Custom domains must still be listed explicitly.
       - key: FRONTEND_ORIGIN
         sync: false
