@@ -1,14 +1,23 @@
 import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from '../users/user.schema';
 import { AgentsService } from './agents.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 
+/**
+ * Agents are a managed directory of staff; admins own their lifecycle.
+ * Read access is open to any authenticated user because the dashboard
+ * surfaces agent stats to everyone.
+ */
+@ApiBearerAuth()
 @ApiTags('agents')
 @Controller('agents')
 export class AgentsController {
   constructor(private readonly agentsService: AgentsService) {}
 
   @Post()
+  @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create an agent' })
   create(@Body() dto: CreateAgentDto) {
     return this.agentsService.create(dto);
@@ -53,6 +62,7 @@ export class AgentsController {
   }
 
   @Delete(':id')
+  @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Delete an agent' })
   remove(@Param('id') id: string) {
     return this.agentsService.remove(id);

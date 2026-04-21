@@ -68,6 +68,39 @@ export class Transaction {
 
   @Prop({ type: Object })
   commissionBreakdown?: CommissionBreakdown;
+
+  /**
+   * Who created this transaction. Points at the authenticated user at
+   * the time of creation. Never overwritten — if the user is later
+   * soft-deleted, the reference still resolves (same rationale as Agent
+   * soft-delete) so audit queries keep working.
+   */
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  createdBy: Types.ObjectId;
+
+  /**
+   * Append-only audit trail: one entry per stage transition, including
+   * the initial `agreement` stamped at create time. Answers the "who
+   * approved this transaction?" question directly without a separate
+   * audit-log collection. Embedded because it is strictly per-transaction
+   * and the stage machine has at most 4 entries.
+   */
+  @Prop({
+    type: [
+      {
+        stage: { type: String, enum: TransactionStage, required: true },
+        at: { type: Date, required: true },
+        by: { type: Types.ObjectId, ref: 'User', required: true },
+        _id: false,
+      },
+    ],
+    default: [],
+  })
+  stageHistory: Array<{
+    stage: TransactionStage;
+    at: Date;
+    by: Types.ObjectId;
+  }>;
 }
 
 export const TransactionSchema = SchemaFactory.createForClass(Transaction);
@@ -100,3 +133,45 @@ TransactionSchema.virtual('isSameAgent').get(function (
 // it still exists in the DB and drives optimistic concurrency.
 TransactionSchema.set('toJSON', { virtuals: true, versionKey: false });
 TransactionSchema.set('toObject', { virtuals: true });
+
+/**
+ * Index strategy.
+ *
+ * Rather than sprinkling `@Prop({ index: true })` on every field, the
+ * indexes below are **designed against the actual query shapes** the
+ * service layer emits (see `TransactionsService.findPaginated`,
+ * `AgentsService.earnings` and the agent transactions view). Each
+ * follows the classic MongoDB **ESR rule** — Equality prefix, then
+ * Sort, then Range — so the same index can both filter *and* satisfy
+ * the sort without an in-memory phase.
+ *
+ * Trade-off: every index adds cost on insert/update. In this workload
+ * writes are infrequent (a handful of transactions a day per office)
+ * and reads dominate (a dashboard opened continuously), so paying ~4
+ * extra index writes per insert to avoid collection scans at read
+ * time is clearly the right call.
+ */
+
+// 1. Paginated list without a stage filter.
+//    Query: find({}).sort({ createdAt: -1, _id: -1 }).skip().limit()
+//    Pure sort-only; the _id tiebreaker is included so the compound
+//    index fully covers both the sort direction and the secondary key.
+TransactionSchema.index({ createdAt: -1, _id: -1 });
+
+// 2. Paginated list + counts filtered by stage.
+//    Query: find({ stage }).sort({ createdAt: -1 }).skip().limit()
+//           countDocuments({ stage })
+//    ESR: equality on `stage`, then sort on `createdAt`. This is the
+//    index that kicks in the moment a user clicks a stage chip.
+TransactionSchema.index({ stage: 1, createdAt: -1, _id: -1 });
+
+// 3. Agent-lens queries (earnings + `/agents/:id/transactions`).
+//    Queries:
+//      find({ stage: COMPLETED, $or: [{ listingAgent }, { sellingAgent }] })
+//      find({ $or: [{ listingAgent }, { sellingAgent }] })
+//    MongoDB resolves `$or` as an index union — one plan per branch —
+//    so we need **one index per agent side**. Putting `stage` second
+//    lets the same index serve the COMPLETED-only earnings path
+//    efficiently (ESR again).
+TransactionSchema.index({ listingAgent: 1, stage: 1, createdAt: -1 });
+TransactionSchema.index({ sellingAgent: 1, stage: 1, createdAt: -1 });

@@ -155,6 +155,20 @@ Non-integer inputs are rejected at two layers: the DTO (`@IsInt()`) and the serv
   ```
   The frontend `useApi` composable relies on this contract to surface human-readable error toasts.
 
+**Driver-level translations.** `AllExceptionsFilter` catches untyped throws (not just `HttpException`) and specifically rewrites the Mongo / Mongoose classes that tend to surface through services:
+
+| Error                                          | Status | Why                                                                         |
+|------------------------------------------------|--------|-----------------------------------------------------------------------------|
+| `HttpException` (any subclass)                 | as-is  | Explicit, the service already knew what it wanted                           |
+| `MongooseError.VersionError`                   | 409    | Safety net for optimistic concurrency — matches the explicit catch          |
+| `MongooseError.ValidationError`                | 400    | Per-field messages returned as `string[]` to fit the class-validator shape  |
+| `MongooseError.CastError`                      | 400    | Malformed `ObjectId` is a client bug, not a server bug                      |
+| `MongoServerError` `code === 11000`            | 409    | Duplicate-unique-index — field name in message, **value scrubbed** (may be PII) |
+| `MongoNetworkError` / `MongoServerSelectionError` / timeouts | 503 | Transient infra. 500 would burn alerts on every Atlas flake                 |
+| anything else                                  | 500    | Raw message is logged server-side but replaced with `"Internal server error"` on the wire |
+
+The "scrub before return" rule is important: the driver's `keyValue` on a duplicate-key error looks like `{ email: 'ayse@example.com' }`, which is user data we should not echo back to the caller. We return the field name only.
+
 ### 1.6b Business logic stays on the server
 
 Every derived fact that depends on business rules is produced by the backend and consumed verbatim by the UI. Two mechanisms achieve this:
@@ -184,37 +198,130 @@ Why not put the rates in MongoDB now? Nothing in `CommissionService` depends on 
 
 The frontend displays percentages computed from `amount / totalServiceFee` on each breakdown. The UI never needs to know what the "current" rate is — the record tells its own story.
 
+### 1.6d CORS — origin-locked, no wildcard
+
+The default `app.enableCors()` call reflects `Access-Control-Allow-Origin: *`, which makes every commission breakdown and agent earnings number reachable from any page the user happens to have open. That is the wrong tradeoff for financial data.
+
+- `FRONTEND_ORIGIN` is a comma-separated allow-list read at bootstrap. Unset falls back to `http://localhost:3000` so `npm run dev` just works — but that's the **only** implicit origin.
+- `parseAllowedOrigins` throws at startup if `*` appears anywhere in the list. A misconfigured prod env should fail to boot, not quietly open up.
+- `credentials: false` stays off until we actually need cross-origin cookies; `credentials: true` combined with any origin `*` is a spec violation and would be doubly wrong here.
+- `methods` is pinned to the verbs we use (`GET`, `POST`, `PATCH`, `DELETE`, plus `OPTIONS` for the preflight). Narrower than NestJS's default and closer to what the API actually accepts.
+
+This is a defence-in-depth measure, not the entire security story. It mitigates casual cross-origin reads and browser-driven scraping; it complements (but does not replace) the authentication layer described in §1.6e.
+
+### 1.6e Authentication, authorization and audit trail
+
+The commission and stage-transition endpoints manipulate money and contractual state. They cannot remain open.
+
+**Identity.** A minimal `User { email, passwordHash, name, role, deletedAt }` model; passwords are bcrypt-hashed at cost 10 and the hash is `select: false` so it never leaks through `populate` or `toJSON`. Soft-delete mirrors the agent model — a deactivated user keeps their row so historical `createdBy` / `stageHistory.by` references still resolve.
+
+**Login flow.** `POST /auth/login` validates email + password and returns `{ access_token, user }`. The token is a standard JWT signed with `JWT_SECRET` (the app refuses to boot if unset or empty) and expires after `JWT_EXPIRES_IN` (default `12h`). `ExtractJwt.fromAuthHeaderAsBearerToken()` — no cookie-based session, no CSRF surface to manage.
+
+**Bootstrap.** `POST /auth/bootstrap-admin` is a one-shot endpoint that creates the first admin account **only while the users collection is empty**; once any user exists it returns `403`. This removes the need for a hardcoded seed password and keeps the "first user of a fresh DB" path out-of-band in the source tree.
+
+**Guards (global + opt-out).**
+- `JwtAuthGuard` is registered as `APP_GUARD`, so every route requires a valid Bearer token by default — secure-by-default. Individual routes opt out with `@Public()` (login, bootstrap, health, root, Swagger UI).
+- `RolesGuard` also runs globally and enforces `@Roles(UserRole.ADMIN)` / `@Roles(UserRole.AGENT, UserRole.ADMIN)` metadata. Missing `@Roles` means "any authenticated user is fine".
+- On every request `JwtStrategy.validate` re-reads the user from MongoDB. A soft-deleted user is rejected (`401`) even if their token has not expired yet — revocation is immediate.
+
+**Role matrix.**
+
+| Route                                        | Public | agent | admin |
+|----------------------------------------------|:-:|:-:|:-:|
+| `POST /auth/login`, `/auth/bootstrap-admin`  | ✓ |   |   |
+| `GET /health`, `/`, `/api/docs`              | ✓ |   |   |
+| `GET /auth/me`                               |   | ✓ | ✓ |
+| `GET /agents`, `/agents/stats`, `/agents/:id/*` |   | ✓ | ✓ |
+| `POST /agents`, `DELETE /agents/:id`          |   |   | ✓ |
+| `GET /transactions`, `/transactions/:id`, `/:id/breakdown` |   | ✓ | ✓ |
+| `POST /transactions`                          |   | ✓ | ✓ |
+| `PATCH /transactions/:id/stage`               |   |   | ✓ |
+| `DELETE /transactions/:id`                    |   |   | ✓ |
+
+Stage advancement (the action that triggers commission calculation) is admin-only. This is the concrete answer to "an unauthenticated actor could flip a transaction to `completed`": they now can't reach the route without a token, and even with a valid agent token the `RolesGuard` stops them.
+
+**Audit trail (embedded).** Every transaction carries:
+- `createdBy: ObjectId<User>` — the authenticated user at the moment of creation.
+- `stageHistory: [{ stage, at: Date, by: ObjectId<User> }]` — append-only, populated at create time with the initial `agreement` entry and pushed on each successful stage transition. Answers "who approved this transaction?" directly with no join, no separate audit-log collection.
+
+Because `stageHistory.by` points at a soft-deletable user, history never silently loses its actor even if the manager leaves the agency. The audit trail is embedded (not a separate collection) for the same reason the commission breakdown is embedded: per-transaction immutability is easier to guarantee when the facts live next to the transaction itself.
+
+### 1.6f Hardening — helmet and rate limiting
+
+- **`helmet()`** is the first middleware in the pipeline (`app.use(helmet())` in `main.ts`). Sets `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Strict-Transport-Security`, `Referrer-Policy`, etc. Stock defaults — the API is JSON-only and the only served HTML is Swagger UI on the same origin.
+- **`ThrottlerModule`** is registered globally with a 60 requests / 60 seconds per-IP bucket. Enough for an office of a few dozen staff clicking through the dashboard; tight enough that a dumb scraper gives up quickly.
+- **Login + bootstrap endpoints** layer on `@Throttle({ default: { limit: 5, ttl: 60_000 } })` (3 for bootstrap). An attacker testing 5 passwords per minute on a bcrypt-protected hash is not a meaningful threat; the rate limit closes what little window remains.
+
+### 1.6g Pagination and dashboard aggregation
+
+Every list endpoint that can grow unboundedly ships paginated. `GET /transactions` accepts `?limit=` (1–100, default 20), `?offset=` (default 0) and an optional `?stage=` filter, all validated by `QueryTransactionsDto`. The response is a uniform envelope:
+
+```json
+{ "items": [...], "total": 1_284, "limit": 20, "offset": 40, "hasMore": true }
+```
+
+- **Offset-based, not cursor-based.** The expected dataset is mid-hundreds per office, not millions. Offset maps one-to-one to `?page=N` in the URL, which is what the UI needs for shareable deep links. If the collection ever grows past ~50k rows we can switch to keyset pagination by `createdAt` without breaking the wire format — the frontend already reads `hasMore` instead of computing page counts.
+- **Hard upper bound on `limit`.** Without a ceiling a single `?limit=999999` request would defeat the entire purpose of pagination; the DTO validator caps it at 100 and the service re-clamps defensively so an internal bypass of validation can't widen the window.
+- **Stable ordering.** Pagination is only meaningful with deterministic order; we sort by `createdAt DESC, _id DESC` so rows inserted between requests don't shift page boundaries and the `_id` tiebreaker guarantees uniqueness on the `createdAt` key.
+- **Counts + revenue don't piggyback on the list.** Previously the frontend derived stage counts and agency revenue by iterating `state.transactions`. With pagination that array is now a window, not the whole collection, so those derivations would silently lie. The fix is a dedicated `GET /transactions/stats` endpoint: a single aggregation returning `{ counts: { agreement, earnest_money, title_deed, completed }, totalAgencyRevenue, totalCompletedServiceFee, total }`. The dashboard reads from this; the list page reads from pagination metadata. Two responsibilities, two endpoints.
+- **Frontend hybrid UX.** The `/islemler` page uses an `IntersectionObserver` sentinel (`rootMargin: 200px`) for infinite scroll *and* reflects the currently-loaded depth in the URL as `?page=N&stage=X` (via `router.replace` so the back button doesn't fire for every scroll step). Opening `/islemler?page=3&stage=completed` replays pages 1–3 sequentially so the shared URL reproduces the sender's view without forcing them to scroll from the top.
+- **Optimistic counters on mutation.** Create / delete bump `pagination.total` locally so the "Tümü (N)" chip updates without a round-trip, and then fire `fetchStats()` in the background so any discrepancy is reconciled within one tick.
+
+### 1.6h Indexing strategy
+
+With pagination in place, every extra millisecond of query planning compounds over thousands of list refreshes. The transaction collection carries **four purpose-built compound indexes** designed against the exact query shapes the service layer emits, all following the ESR rule (Equality prefix → Sort → Range):
+
+| Index | Serves |
+|-------|--------|
+| `{ createdAt: -1, _id: -1 }` | Unfiltered paginated list (`find({}).sort(…)`) — `_id` tiebreaker keeps page boundaries stable under concurrent inserts. |
+| `{ stage: 1, createdAt: -1, _id: -1 }` | Stage-chip click → `find({ stage }).sort(…)` + `countDocuments({ stage })`. The equality prefix on `stage` is what makes this index "win" the planner over the previous one. |
+| `{ listingAgent: 1, stage: 1, createdAt: -1 }` | `find({ stage: COMPLETED, $or: [{ listingAgent }, …] })` for earnings, and the agent transactions view. MongoDB resolves `$or` as an **index union** — one plan per branch — so we need one compound per agent side. |
+| `{ sellingAgent: 1, stage: 1, createdAt: -1 }` | Same as above, other side of the `$or`. |
+
+- **Why not just `@Prop({ index: true })` on every field?** Single-field indexes on `stage` alone are low-selectivity (4 values, ~quarter of the collection per value) and can't satisfy the `sort(createdAt)` — the planner would still do an in-memory sort. The ESR compounds above are what actually eliminate the slow path.
+- **Write-amplification trade-off.** Four indexes means every insert writes four extra B-tree entries. For this workload (a few dozen writes/day, thousands of reads) that's a clearly favourable exchange.
+- **Protected against accidental removal.** `transaction.schema.spec.ts` has dedicated tests that assert each of these indexes is still declared; dropping one in a future refactor fails CI rather than silently bringing back collection scans.
+- **Users and Agents** keep only their existing indexes (partial unique email on `User` where `deletedAt: null`; the baseline `_id`). Their collections stay small enough that adding more indexes would cost more on writes than it saves on reads.
+
 ### 1.7 API surface
 
-| Method | Path                           | Purpose                                       |
-|--------|--------------------------------|-----------------------------------------------|
-| GET    | `/`                            | API metadata (name, version, docs, health)    |
-| GET    | `/health`                      | Liveness + mongo connectivity                 |
-| GET    | `/api/docs`                    | Swagger UI                                    |
-| POST   | `/agents`                      | Create agent                                  |
-| GET    | `/agents`                      | List active agents                            |
-| GET    | `/agents/stats`                | Agents + aggregate counts + total earnings    |
-| GET    | `/agents/:id`                  | Get one agent (incl. soft-deleted)            |
-| GET    | `/agents/:id/earnings`         | Aggregated earnings across completed tx       |
-| GET    | `/agents/:id/transactions`     | Agent-lens transaction feed (role + amount)   |
-| DELETE | `/agents/:id`                  | Soft-delete agent (idempotent)                |
-| POST   | `/transactions`                | Create transaction (starts at `agreement`)    |
-| GET    | `/transactions`                | List all (agents populated)                   |
-| GET    | `/transactions/:id`            | Get one (agents populated)                    |
-| PATCH  | `/transactions/:id/stage`      | Advance to the next stage                     |
-| GET    | `/transactions/:id/breakdown`  | Commission breakdown (completed only)         |
-| DELETE | `/transactions/:id`            | Delete a transaction                          |
+| Method | Path                           | Auth | Purpose                                   |
+|--------|--------------------------------|------|-------------------------------------------|
+| GET    | `/`                            | public | API metadata (name, version, docs, health) |
+| GET    | `/health`                      | public | Liveness + mongo connectivity             |
+| GET    | `/api/docs`                    | public | Swagger UI                                |
+| POST   | `/auth/login`                  | public (5/min) | Email + password → Bearer token  |
+| POST   | `/auth/bootstrap-admin`        | public (3/min, disabled after 1st user) | Create first admin |
+| GET    | `/auth/me`                     | any authenticated | Current user claims           |
+| POST   | `/agents`                      | admin | Create agent                             |
+| GET    | `/agents`                      | any authenticated | List active agents        |
+| GET    | `/agents/stats`                | any authenticated | Agents + aggregate counts + total earnings |
+| GET    | `/agents/:id`                  | any authenticated | Get one agent (incl. soft-deleted) |
+| GET    | `/agents/:id/earnings`         | any authenticated | Aggregated earnings across completed tx |
+| GET    | `/agents/:id/transactions`     | any authenticated | Agent-lens transaction feed |
+| DELETE | `/agents/:id`                  | admin | Soft-delete agent (idempotent)           |
+| POST   | `/transactions`                | agent + admin | Create transaction (`agreement` start) |
+| GET    | `/transactions`                | any authenticated | **Paginated** list (`?limit=`, `?offset=`, `?stage=`) |
+| GET    | `/transactions/stats`          | any authenticated | Aggregate counts + total agency revenue (kuruş) |
+| GET    | `/transactions/:id`            | any authenticated | Get one (agents populated) |
+| PATCH  | `/transactions/:id/stage`      | admin | Advance to the next stage               |
+| GET    | `/transactions/:id/breakdown`  | any authenticated | Commission breakdown (completed only) |
+| DELETE | `/transactions/:id`            | admin | Delete a transaction                    |
 
 ### 1.8 Testing
 
 Jest unit tests cover:
 - `CommissionService` — §4.3 scenarios 1 & 2, edge cases (fee=0, negative fee, float drift), sum invariant on odd fees.
-- `TransactionsService` — every valid transition, invalid transitions (`400`), terminal state guard, missing transaction (`404`), breakdown fetch before / after completion, optimistic-concurrency collision (`409` on `VersionError`), passthrough of unrelated save errors, and **create-time soft-delete integrity** (accepts two active agents, rejects any soft-deleted reference with `400`, collapses same-agent to a single lookup).
+- `TransactionsService` — every valid transition, invalid transitions (`400`), terminal state guard, missing transaction (`404`), breakdown fetch before / after completion, optimistic-concurrency collision (`409` on `VersionError`), passthrough of unrelated save errors, **create-time soft-delete integrity** (accepts two active agents, rejects any soft-deleted reference with `400`, collapses same-agent to a single lookup), **pagination** (defaults, stage filter, `hasMore` edge cases, limit/offset clamping), **stats aggregation** (normal result, empty collection, missing fields defensive-defaulted).
 - `AgentsService` — `findAll` filters `deletedAt: null`, `findOne` still resolves soft-deleted rows (so populate history works), `remove` soft-deletes on first call and is idempotent on second, missing id still throws `404`, `earnings` aggregation across mixed same-agent and different-agent completed transactions, `stats` delegates to the aggregation pipeline and enforces the `deletedAt: null` match stage, `transactions` projects role + amount (`listing`, `both`, `null` while not yet payout-ready) and keeps working for soft-deleted agents so their history stays accessible.
-- `Transaction` schema virtuals — `isPayoutReady` is false until `stage = completed` **and** the breakdown has been populated; `isSameAgent` compares populated / raw refs; JSON output ships both virtuals and hides `__v`.
+- `Transaction` schema virtuals — `isPayoutReady` is false until `stage = completed` **and** the breakdown has been populated; `isSameAgent` compares populated / raw refs; JSON output ships both virtuals and hides `__v`. Index tests assert all four ESR compound indexes are still declared so no future refactor can silently bring back collection scans.
 - `AppController` — metadata root.
 
-Total: **44 unit tests** across 5 suites, all green (`npm test`).
+- `AuthService` — login flow (token shape, `Unauthorized` for unknown email or wrong password, no hash leakage in the response), bootstrap flow (creates admin only when users collection is empty, idempotent `Forbidden` thereafter).
+- `RolesGuard` — missing / empty `@Roles` passes through; required role matches pass; mismatching role or missing `req.user` throws `Forbidden`; multiple roles behave as OR.
+- `AllExceptionsFilter` — translates driver-level errors to proper HTTP codes, scrubs duplicate-key values.
+
+Total: **93 unit tests** across 10 suites, all green (`npm test`).
 
 ---
 
@@ -258,10 +365,10 @@ We use the **options API** style of Pinia (`state`, `getters`, `actions`) rather
 
 Two stores:
 
-- `useTransactionsStore` — holds `transactions[]` and `current`, exposes `fetchAll / fetchOne / create / updateStage / remove`, plus `counts` and `totalAgencyRevenue` getters.
+- `useTransactionsStore` — holds a **windowed** `transactions[]` (server-paginated), `current`, server-computed `stats`, and `pagination` metadata (`offset / limit / total / hasMore`). Exposes `fetchPage / fetchThroughPage / fetchStats / fetchOne / create / updateStage / remove`. The `counts` and `totalAgencyRevenue` getters read from `stats`, never from the windowed list — this is the key change that lets the dashboard stay honest once the collection grows past a single page.
 - `useAgentsStore` — holds `agents[]`, exposes `fetchAll / create / remove / earnings`. `earnings` does **not** mutate the store, it returns the aggregated report directly (it's a query, not state).
 
-Mutations after writes are optimistic-ish: a new agent/transaction is unshifted into the list so the dashboard updates without a full refetch; a stage update replaces the affected row in place.
+Mutations after writes are optimistic-ish: a new agent/transaction is unshifted into the list, `pagination.total` is bumped locally, and `fetchStats()` is fired-and-forgotten to reconcile any drift on the next tick. Stage updates replace the affected row in place.
 
 ### 2.3 `useApi` composable
 

@@ -12,6 +12,7 @@ import {
 import { TransactionStage } from './transaction.schema';
 import { TransactionsService } from './transactions.service';
 
+const ACTOR_ID = '507f1f77bcf86cd799439011';
 const mockSave = jest.fn();
 const mockTransaction = (overrides = {}) => ({
   _id: 'tx1',
@@ -21,6 +22,7 @@ const mockTransaction = (overrides = {}) => ({
   listingAgent: { toString: () => 'agent1' },
   sellingAgent: { toString: () => 'agent2' },
   commissionBreakdown: undefined,
+  stageHistory: [],
   save: mockSave,
   ...overrides,
 });
@@ -28,6 +30,8 @@ const mockTransaction = (overrides = {}) => ({
 const mockTransactionModel = {
   findById: jest.fn(),
   find: jest.fn(),
+  countDocuments: jest.fn(),
+  aggregate: jest.fn(),
   save: mockSave,
 };
 
@@ -63,7 +67,11 @@ describe('TransactionsService — Stage Geçişleri', () => {
       exec: () => Promise.resolve(tx),
     });
 
-    await service.updateStage('tx1', { stage: TransactionStage.EARNEST_MONEY });
+    await service.updateStage(
+      'tx1',
+      { stage: TransactionStage.EARNEST_MONEY },
+      ACTOR_ID,
+    );
     expect(tx.stage).toBe(TransactionStage.EARNEST_MONEY);
   });
 
@@ -73,7 +81,11 @@ describe('TransactionsService — Stage Geçişleri', () => {
       exec: () => Promise.resolve(tx),
     });
 
-    await service.updateStage('tx1', { stage: TransactionStage.TITLE_DEED });
+    await service.updateStage(
+      'tx1',
+      { stage: TransactionStage.TITLE_DEED },
+      ACTOR_ID,
+    );
     expect(tx.stage).toBe(TransactionStage.TITLE_DEED);
   });
 
@@ -83,9 +95,36 @@ describe('TransactionsService — Stage Geçişleri', () => {
       exec: () => Promise.resolve(tx),
     });
 
-    await service.updateStage('tx1', { stage: TransactionStage.COMPLETED });
+    await service.updateStage(
+      'tx1',
+      { stage: TransactionStage.COMPLETED },
+      ACTOR_ID,
+    );
     expect(tx.commissionBreakdown).toBeDefined();
     expect((tx.commissionBreakdown as any).agencyAmount).toBe(50_000);
+  });
+
+  it('stage transition stageHistory dizisine actor bilgisiyle entry ekler', async () => {
+    const tx = mockTransaction({ stage: TransactionStage.AGREEMENT });
+    mockTransactionModel.findById.mockReturnValue({
+      exec: () => Promise.resolve(tx),
+    });
+
+    await service.updateStage(
+      'tx1',
+      { stage: TransactionStage.EARNEST_MONEY },
+      ACTOR_ID,
+    );
+
+    const history = tx.stageHistory as Array<{
+      stage: TransactionStage;
+      by: { toString(): string };
+      at: Date;
+    }>;
+    expect(history).toHaveLength(1);
+    expect(history[0].stage).toBe(TransactionStage.EARNEST_MONEY);
+    expect(history[0].by.toString()).toBe(ACTOR_ID);
+    expect(history[0].at).toBeInstanceOf(Date);
   });
 
   it('geçersiz geçiş (agreement → completed) BadRequestException fırlatmalı', async () => {
@@ -95,7 +134,11 @@ describe('TransactionsService — Stage Geçişleri', () => {
     });
 
     await expect(
-      service.updateStage('tx1', { stage: TransactionStage.COMPLETED }),
+      service.updateStage(
+        'tx1',
+        { stage: TransactionStage.COMPLETED },
+        ACTOR_ID,
+      ),
     ).rejects.toThrow(BadRequestException);
   });
 
@@ -106,7 +149,11 @@ describe('TransactionsService — Stage Geçişleri', () => {
     });
 
     await expect(
-      service.updateStage('tx1', { stage: TransactionStage.TITLE_DEED }),
+      service.updateStage(
+        'tx1',
+        { stage: TransactionStage.TITLE_DEED },
+        ACTOR_ID,
+      ),
     ).rejects.toThrow(BadRequestException);
   });
 
@@ -116,9 +163,11 @@ describe('TransactionsService — Stage Geçişleri', () => {
     });
 
     await expect(
-      service.updateStage('nonexistent', {
-        stage: TransactionStage.EARNEST_MONEY,
-      }),
+      service.updateStage(
+        'nonexistent',
+        { stage: TransactionStage.EARNEST_MONEY },
+        ACTOR_ID,
+      ),
     ).rejects.toThrow(NotFoundException);
   });
 
@@ -127,8 +176,6 @@ describe('TransactionsService — Stage Geçişleri', () => {
     mockTransactionModel.findById.mockReturnValue({
       exec: () => Promise.resolve(tx),
     });
-    // Başka bir istek arada __v'yi bumpladı: optimistic concurrency VersionError fırlatır.
-    // VersionError ctor `doc._doc._id` okuduğu için _doc shape'i gerekiyor.
     const versionError = new MongooseError.VersionError(
       { _doc: { _id: 'tx1' } } as any,
       0,
@@ -137,7 +184,11 @@ describe('TransactionsService — Stage Geçişleri', () => {
     mockSave.mockRejectedValueOnce(versionError);
 
     await expect(
-      service.updateStage('tx1', { stage: TransactionStage.EARNEST_MONEY }),
+      service.updateStage(
+        'tx1',
+        { stage: TransactionStage.EARNEST_MONEY },
+        ACTOR_ID,
+      ),
     ).rejects.toThrow(ConflictException);
   });
 
@@ -149,7 +200,11 @@ describe('TransactionsService — Stage Geçişleri', () => {
     mockSave.mockRejectedValueOnce(new Error('connection reset'));
 
     await expect(
-      service.updateStage('tx1', { stage: TransactionStage.EARNEST_MONEY }),
+      service.updateStage(
+        'tx1',
+        { stage: TransactionStage.EARNEST_MONEY },
+        ACTOR_ID,
+      ),
     ).rejects.toThrow('connection reset');
   });
 });
@@ -194,13 +249,24 @@ describe('TransactionsService — Create (soft-delete integrity)', () => {
     );
     (service as any).agentModel = mockAgentModel;
 
-    await service.create(dto);
+    await service.create(dto, ACTOR_ID);
 
     expect(mockAgentModel.find).toHaveBeenCalledWith({
       _id: { $in: ['listing1', 'selling1'] },
       deletedAt: null,
     });
-    expect(TxCtor).toHaveBeenCalledWith(dto);
+    // Audit fields are stamped server-side, not taken from the DTO.
+    expect(TxCtor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...dto,
+        createdBy: expect.anything(),
+        stageHistory: expect.arrayContaining([
+          expect.objectContaining({
+            stage: TransactionStage.AGREEMENT,
+          }),
+        ]),
+      }),
+    );
     expect(saveSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -211,10 +277,9 @@ describe('TransactionsService — Create (soft-delete integrity)', () => {
       listingAgent: 'listing1',
       sellingAgent: 'deletedOne',
     };
-    // Sadece listing aktif dönüyor; sellingAgent soft-deleted → filter'dan düşüyor.
     mockActiveAgents(['listing1']);
 
-    await expect(service.create(dto)).rejects.toMatchObject({
+    await expect(service.create(dto, ACTOR_ID)).rejects.toMatchObject({
       message: expect.stringContaining('deletedOne'),
       name: 'BadRequestException',
     });
@@ -237,7 +302,7 @@ describe('TransactionsService — Create (soft-delete integrity)', () => {
     );
     (service as any).agentModel = mockAgentModel;
 
-    await service.create(dto);
+    await service.create(dto, ACTOR_ID);
 
     expect(mockAgentModel.find).toHaveBeenCalledWith({
       _id: { $in: ['soloAgent'] },
@@ -259,16 +324,20 @@ describe('TransactionsService — Breakdown', () => {
     jest.clearAllMocks();
   });
 
+  const buildPopulateChain = (tx: unknown) => {
+    const link = (): any => ({
+      populate: link,
+      exec: () => Promise.resolve(tx),
+    });
+    return link();
+  };
+
   it('completed değilse breakdown isteği BadRequestException fırlatır', async () => {
     const tx = mockTransaction({
       stage: TransactionStage.TITLE_DEED,
       commissionBreakdown: undefined,
     });
-    mockTransactionModel.findById.mockReturnValue({
-      populate: () => ({
-        populate: () => ({ exec: () => Promise.resolve(tx) }),
-      }),
-    });
+    mockTransactionModel.findById.mockReturnValue(buildPopulateChain(tx));
 
     await expect(service.getBreakdown('tx1')).rejects.toThrow(
       BadRequestException,
@@ -289,11 +358,7 @@ describe('TransactionsService — Breakdown', () => {
       stage: TransactionStage.COMPLETED,
       commissionBreakdown: breakdown,
     });
-    mockTransactionModel.findById.mockReturnValue({
-      populate: () => ({
-        populate: () => ({ exec: () => Promise.resolve(tx) }),
-      }),
-    });
+    mockTransactionModel.findById.mockReturnValue(buildPopulateChain(tx));
 
     const result = await service.getBreakdown('tx1');
     expect(result).toEqual({
@@ -302,5 +367,194 @@ describe('TransactionsService — Breakdown', () => {
       totalServiceFee: 100_000,
       breakdown,
     });
+  });
+});
+
+describe('TransactionsService — Pagination', () => {
+  let service: TransactionsService;
+
+  beforeEach(() => {
+    service = new TransactionsService(
+      mockTransactionModel as any,
+      mockAgentModel as any,
+      new CommissionService(stubPolicyService),
+    );
+    jest.clearAllMocks();
+  });
+
+  const buildListChain = (items: unknown[]) => {
+    const chain: any = {
+      sort: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      populate: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue(items),
+    };
+    return chain;
+  };
+
+  it('limit default 20, offset default 0, sort createdAt desc + _id tiebreaker', async () => {
+    const items = Array.from({ length: 20 }, (_, i) => ({ _id: `t${i}` }));
+    const listChain = buildListChain(items);
+    mockTransactionModel.find.mockReturnValue(listChain);
+    mockTransactionModel.countDocuments.mockReturnValue({
+      exec: () => Promise.resolve(42),
+    });
+
+    const res = await service.findPaginated({});
+
+    expect(mockTransactionModel.find).toHaveBeenCalledWith({});
+    expect(listChain.sort).toHaveBeenCalledWith({ createdAt: -1, _id: -1 });
+    expect(listChain.skip).toHaveBeenCalledWith(0);
+    expect(listChain.limit).toHaveBeenCalledWith(20);
+    expect(res).toEqual({
+      items,
+      total: 42,
+      limit: 20,
+      offset: 0,
+      hasMore: true,
+    });
+  });
+
+  it('stage filtresi hem find hem countDocuments filter argümanına gider', async () => {
+    const listChain = buildListChain([]);
+    mockTransactionModel.find.mockReturnValue(listChain);
+    const countExec = jest.fn().mockResolvedValue(0);
+    mockTransactionModel.countDocuments.mockReturnValue({ exec: countExec });
+
+    await service.findPaginated({ stage: TransactionStage.COMPLETED });
+
+    expect(mockTransactionModel.find).toHaveBeenCalledWith({
+      stage: TransactionStage.COMPLETED,
+    });
+    expect(mockTransactionModel.countDocuments).toHaveBeenCalledWith({
+      stage: TransactionStage.COMPLETED,
+    });
+  });
+
+  it('hasMore: offset + items.length >= total iken false', async () => {
+    const items = [{ _id: 'a' }, { _id: 'b' }];
+    mockTransactionModel.find.mockReturnValue(buildListChain(items));
+    mockTransactionModel.countDocuments.mockReturnValue({
+      exec: () => Promise.resolve(12), // 10 + 2 = 12 → son sayfa
+    });
+
+    const res = await service.findPaginated({ limit: 10, offset: 10 });
+    expect(res.hasMore).toBe(false);
+  });
+
+  it('limit üst sınırı 100 (DTO bypass edilse bile servis clamp eder)', async () => {
+    const listChain = buildListChain([]);
+    mockTransactionModel.find.mockReturnValue(listChain);
+    mockTransactionModel.countDocuments.mockReturnValue({
+      exec: () => Promise.resolve(0),
+    });
+
+    await service.findPaginated({ limit: 10_000 } as any);
+
+    expect(listChain.limit).toHaveBeenCalledWith(100);
+  });
+
+  it('limit alt sınırı 1', async () => {
+    const listChain = buildListChain([]);
+    mockTransactionModel.find.mockReturnValue(listChain);
+    mockTransactionModel.countDocuments.mockReturnValue({
+      exec: () => Promise.resolve(0),
+    });
+
+    await service.findPaginated({ limit: 0 } as any);
+
+    expect(listChain.limit).toHaveBeenCalledWith(1);
+  });
+
+  it('negatif offset 0 olur', async () => {
+    const listChain = buildListChain([]);
+    mockTransactionModel.find.mockReturnValue(listChain);
+    mockTransactionModel.countDocuments.mockReturnValue({
+      exec: () => Promise.resolve(0),
+    });
+
+    await service.findPaginated({ offset: -5 } as any);
+
+    expect(listChain.skip).toHaveBeenCalledWith(0);
+  });
+});
+
+describe('TransactionsService — Stats', () => {
+  let service: TransactionsService;
+
+  beforeEach(() => {
+    service = new TransactionsService(
+      mockTransactionModel as any,
+      mockAgentModel as any,
+      new CommissionService(stubPolicyService),
+    );
+    jest.clearAllMocks();
+  });
+
+  it('aggregation sonucunu counts + totalAgencyRevenue + totalCompletedServiceFee olarak döner', async () => {
+    mockTransactionModel.aggregate.mockReturnValue({
+      exec: () =>
+        Promise.resolve([
+          {
+            total: 10,
+            agreement: 3,
+            earnest_money: 2,
+            title_deed: 1,
+            completed: 4,
+            totalAgencyRevenue: 200_000,
+            totalCompletedServiceFee: 400_000,
+          },
+        ]),
+    });
+
+    const res = await service.stats();
+    expect(res).toEqual({
+      total: 10,
+      totalAgencyRevenue: 200_000,
+      totalCompletedServiceFee: 400_000,
+      counts: {
+        agreement: 3,
+        earnest_money: 2,
+        title_deed: 1,
+        completed: 4,
+      },
+    });
+  });
+
+  it('tablo boşsa sıfırlı payload döner (dashboard ilk açılışta patlamaz)', async () => {
+    mockTransactionModel.aggregate.mockReturnValue({
+      exec: () => Promise.resolve([]),
+    });
+
+    const res = await service.stats();
+    expect(res).toEqual({
+      total: 0,
+      totalAgencyRevenue: 0,
+      totalCompletedServiceFee: 0,
+      counts: {
+        agreement: 0,
+        earnest_money: 0,
+        title_deed: 0,
+        completed: 0,
+      },
+    });
+  });
+
+  it('eksik alanlar 0 olarak doldurulur (aggregation defensive)', async () => {
+    mockTransactionModel.aggregate.mockReturnValue({
+      exec: () =>
+        Promise.resolve([{ total: 5, agreement: 5 }]),
+    });
+
+    const res = await service.stats();
+    expect(res.counts).toEqual({
+      agreement: 5,
+      earnest_money: 0,
+      title_deed: 0,
+      completed: 0,
+    });
+    expect(res.totalAgencyRevenue).toBe(0);
+    expect(res.totalCompletedServiceFee).toBe(0);
   });
 });

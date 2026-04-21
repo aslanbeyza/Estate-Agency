@@ -45,13 +45,18 @@ const { showForm, form, submitting, formError, submit, toggle } = useCrudForm({
   submit: (f) => agentStore.create({ name: f.name, email: f.email, phone: f.phone || undefined }),
   successMessage: 'Danışman eklendi.',
 })
+
+// Agent CRUD is admin-only on the backend; hide the affordance to avoid
+// surfacing a button that would come back with 403.
+const auth = useAuthStore()
+const canManageAgents = computed(() => auth.isAdmin)
 </script>
 
 <template>
   <div>
     <PageHeader title="Danışmanlar" subtitle="Performans ve işlem geçmişi">
       <template #action>
-        <button @click="toggle" class="btn-primary">
+        <button v-if="canManageAgents" @click="toggle" class="btn-primary">
           <AppIcon name="plus" :stroke-width="2.5" class="w-4 h-4" />
           <span class="hidden sm:inline">Yeni Danışman</span>
           <span class="sm:hidden">Ekle</span>
@@ -61,7 +66,7 @@ const { showForm, form, submitting, formError, submit, toggle } = useCrudForm({
 
     <!-- Form -->
     <SlideDownTransition>
-    <div v-if="showForm" class="card p-4 md:p-6 mb-5">
+    <div v-if="showForm && canManageAgents" class="card p-4 md:p-6 mb-5">
       <div class="flex items-start justify-between mb-4">
         <div>
           <h2 class="font-semibold text-slate-800 dark:text-slate-100">Yeni Danışman Ekle</h2>

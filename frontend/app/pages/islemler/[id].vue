@@ -35,6 +35,12 @@ async function advanceStage() {
 }
 
 const sameAgent = computed(() => tx.value?.isSameAgent ?? false)
+
+// Stage advancement is admin-only on the backend. Mirror that check on
+// the client so agents don't see a button that would just 403 — less
+// confusing UX and it hides the affordance altogether.
+const auth = useAuthStore()
+const canAdvanceStage = computed(() => auth.isAdmin)
 </script>
 
 <template>
@@ -71,8 +77,8 @@ const sameAgent = computed(() => tx.value?.isSameAgent ?? false)
             <p :class="['text-sm mt-0.5 opacity-80', stageMeta.textOn]">{{ stageMeta.desc }}</p>
           </div>
 
-          <!-- İlerlet -->
-          <div v-if="nextStage">
+          <!-- İlerlet — sadece yönetici -->
+          <div v-if="nextStage && canAdvanceStage">
             <p v-if="stageError" class="alert alert-danger text-sm mb-3">{{ stageError }}</p>
             <div v-if="!showConfirm" class="flex flex-col sm:flex-row sm:items-center gap-2">
               <button @click="showConfirm = true" class="btn-primary w-full sm:w-auto justify-center">
@@ -94,6 +100,15 @@ const sameAgent = computed(() => tx.value?.isSameAgent ?? false)
               </div>
             </div>
             </Transition>
+          </div>
+
+          <!-- Danışman: yalnızca bilgi mesajı -->
+          <div
+            v-else-if="nextStage && !canAdvanceStage"
+            class="flex items-center gap-2.5 text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm"
+          >
+            <AppIcon name="check" class="w-5 h-5 shrink-0 text-slate-400" />
+            <span>Aşama geçişlerini yalnızca yönetici yapabilir.</span>
           </div>
 
           <div v-else class="flex items-center gap-2.5 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl px-4 py-3">
@@ -143,6 +158,34 @@ const sameAgent = computed(() => tx.value?.isSameAgent ?? false)
             color="emerald"
             :is-same="sameAgent"
           />
+        </div>
+
+        <!-- Denetim izi -->
+        <div class="card p-4 md:p-5">
+          <h3 class="section-label mb-3">Denetim İzi</h3>
+          <div class="space-y-3 text-sm">
+            <div v-if="tx.createdBy">
+              <p class="text-xs text-slate-400 dark:text-slate-500 mb-0.5">Oluşturan</p>
+              <p class="font-medium text-slate-700 dark:text-slate-200">{{ tx.createdBy.name }}</p>
+              <p class="text-xs text-slate-400 dark:text-slate-500">{{ tx.createdBy.email }}</p>
+            </div>
+            <div v-if="tx.stageHistory?.length">
+              <p class="text-xs text-slate-400 dark:text-slate-500 mb-2">Aşama Geçmişi</p>
+              <ul class="space-y-2">
+                <li
+                  v-for="(entry, i) in tx.stageHistory"
+                  :key="i"
+                  class="flex items-start gap-2.5 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/60"
+                >
+                  <StageBadge :stage="entry.stage" size="sm" class="shrink-0 mt-0.5" />
+                  <div class="min-w-0 flex-1">
+                    <p class="text-xs text-slate-500 dark:text-slate-400">{{ formatDateTime(entry.at) }}</p>
+                    <p class="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{{ entry.by?.name ?? '—' }}</p>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </div>
         </div>
       </div>
     </div>

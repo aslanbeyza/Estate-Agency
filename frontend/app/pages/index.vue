@@ -4,14 +4,22 @@ import { useAgentsStore } from '~/stores/agents'
 
 const txStore = useTransactionsStore()
 const agentStore = useAgentsStore()
-await Promise.all([txStore.fetchAll(), agentStore.fetchAll()])
+
+// Dashboard loads server-computed stats + only the 10 most recent rows.
+// Any KPI below reads from `stats` so the numbers stay correct even
+// though `transactions` is now a *windowed* slice of the collection.
+await Promise.all([
+  txStore.fetchStats(),
+  txStore.fetchPage({ limit: 10, offset: 0, append: false }),
+  agentStore.fetchAll(),
+])
 
 const { STAGE_META } = useStageMeta()
 
-const totalFee = computed(() =>
-  txStore.transactions.filter(t => t.stage === 'completed').reduce((s, t) => s + t.totalServiceFee, 0)
+const totalFee = computed(() => txStore.stats.totalCompletedServiceFee)
+const activeCount = computed(
+  () => txStore.stats.total - txStore.stats.counts.completed,
 )
-const activeCount = computed(() => txStore.transactions.filter(t => t.stage !== 'completed').length)
 </script>
 
 <template>
@@ -22,7 +30,7 @@ const activeCount = computed(() => txStore.transactions.filter(t => t.stage !== 
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
       <div class="card p-4 md:p-5">
         <p class="section-label mb-2">Toplam İşlem</p>
-        <p class="text-3xl font-bold text-slate-800 dark:text-slate-100">{{ txStore.transactions.length }}</p>
+        <p class="text-3xl font-bold text-slate-800 dark:text-slate-100">{{ txStore.stats.total }}</p>
         <p class="text-xs text-slate-400 dark:text-slate-500 mt-1">{{ activeCount }} aktif devam ediyor</p>
       </div>
       <div class="card p-4 md:p-5">
@@ -30,7 +38,7 @@ const activeCount = computed(() => txStore.transactions.filter(t => t.stage !== 
         <p class="text-xl font-bold text-slate-800 dark:text-slate-100 leading-tight">{{ formatTRY(totalFee) }}</p>
         <p class="text-xs text-slate-400 dark:text-slate-500 mt-1">tamamlanan işlemler</p>
       </div>
-      <div class="bg-gradient-to-br from-indigo-600 to-indigo-700 dark:from-indigo-700 dark:to-indigo-900 rounded-2xl p-4 md:p-5 shadow-sm">
+      <div class="bg-linear-to-br from-indigo-600 to-indigo-700 dark:from-indigo-700 dark:to-indigo-900 rounded-2xl p-4 md:p-5 shadow-sm">
         <p class="text-xs font-semibold text-indigo-200 uppercase tracking-wide mb-2">Ajans Geliri</p>
         <p class="text-xl font-bold text-white leading-tight">{{ formatTRY(txStore.totalAgencyRevenue) }}</p>
         <p class="text-xs text-indigo-300 mt-1">%50 komisyon payı</p>

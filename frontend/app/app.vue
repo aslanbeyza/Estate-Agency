@@ -1,11 +1,20 @@
 <script setup lang="ts">
+import type { IconName } from './types'
+
 const { isDark, toggle, init } = useTheme()
 onMounted(() => init())
 
 const route = useRoute()
+const auth = useAuthStore()
+auth.hydrate()
+
 const sidebarOpen = ref(false)
 
 watch(() => route.path, () => { sidebarOpen.value = false })
+
+// Auth-only routes vs the login page. The login screen needs its own
+// full-bleed layout — no sidebar, no topbar — so we key off the route.
+const isAuthRoute = computed(() => route.path === '/giris')
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: 'grid' },
@@ -16,11 +25,25 @@ const navItems = [
 function isActive(to: string) {
   return to === '/' ? route.path === '/' : route.path.startsWith(to)
 }
+
+async function onLogout() {
+  auth.logout()
+  await navigateTo('/giris')
+}
 </script>
 
 <template>
   <div class="min-h-screen bg-slate-50 dark:bg-slate-950">
 
+    <!-- Minimal shell for the login route: no sidebar, no topbar -->
+    <template v-if="isAuthRoute">
+      <main class="min-h-screen flex items-center justify-center p-4">
+        <NuxtPage />
+      </main>
+      <ToastContainer />
+    </template>
+
+    <template v-else>
     <!-- Mobile Top Bar -->
     <header class="md:hidden fixed top-0 left-0 right-0 z-40 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 h-14 flex items-center px-4 gap-3">
       <button
@@ -30,7 +53,7 @@ function isActive(to: string) {
         <AppIcon name="menu" class="w-5 h-5" />
       </button>
       <div class="flex items-center gap-2">
-        <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center">
+        <div class="w-7 h-7 rounded-lg bg-linear-to-br from-indigo-500 to-indigo-700 flex items-center justify-center">
           <AppIcon name="home" class="w-4 h-4 text-white" />
         </div>
         <span class="font-bold text-slate-800 dark:text-slate-100 text-sm">EstateFlow</span>
@@ -70,7 +93,7 @@ function isActive(to: string) {
       <!-- Logo -->
       <div class="px-5 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center shadow-sm">
+          <div class="w-9 h-9 rounded-xl bg-linear-to-br from-indigo-500 to-indigo-700 flex items-center justify-center shadow-sm">
             <AppIcon name="home" class="w-5 h-5 text-white" />
           </div>
           <div>
@@ -93,13 +116,33 @@ function isActive(to: string) {
           :to="item.to"
           :class="['nav-link', isActive(item.to) ? 'nav-link-active' : '']"
         >
-          <AppIcon :name="item.icon" :stroke-width="1.8" class="w-5 h-5 shrink-0" />
+          <AppIcon :name="item.icon as IconName" :stroke-width="1.8" class="w-5 h-5 shrink-0" />
           <span>{{ item.label }}</span>
         </NuxtLink>
       </nav>
 
-      <!-- Dark mode toggle -->
+      <!-- User + controls -->
       <div class="px-4 py-4 border-t border-slate-100 dark:border-slate-800 space-y-2">
+        <div
+          v-if="auth.isAuthenticated"
+          class="flex items-center gap-3 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/60"
+        >
+          <div class="w-8 h-8 rounded-lg bg-linear-to-br from-indigo-500 to-indigo-700 flex items-center justify-center text-white text-xs font-semibold shrink-0">
+            {{ auth.user?.name?.[0]?.toUpperCase() ?? '?' }}
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">{{ auth.user?.name }}</p>
+            <p class="text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">{{ auth.role === 'admin' ? 'Yönetici' : 'Danışman' }}</p>
+          </div>
+          <button
+            @click="onLogout"
+            class="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors shrink-0"
+            title="Çıkış yap"
+            aria-label="Çıkış yap"
+          >
+            <AppIcon name="close" class="w-4 h-4" />
+          </button>
+        </div>
         <button
           @click="toggle"
           class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200 transition-all"
@@ -123,6 +166,7 @@ function isActive(to: string) {
     </div>
     <!-- Global toasts -->
     <ToastContainer />
+    </template>
   </div>
 </template>
 
