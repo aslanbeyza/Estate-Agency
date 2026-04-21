@@ -1,0 +1,41 @@
+# Render blueprint — `https://render.com/docs/blueprint-spec`
+#
+# Deploys the NestJS API as a free-tier web service. Import this repo on
+# Render via "New → Blueprint" and Render reads this file to create the
+# service automatically. You only fill in the secrets in the dashboard
+# (see the `sync: false` fields below).
+#
+# Runtime notes:
+# - Render injects its own `PORT` env var; main.ts already honours it.
+# - The free plan sleeps after 15 min of inactivity. First request after
+#   idle takes ~30–60 s while the container cold-starts. Fine for a case
+#   demo, upgrade to `starter` ($7/mo) if that's unacceptable.
+# - `healthCheckPath` disables Render's "no response" restart loop.
+services:
+  - type: web
+    name: estate-agency-api
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: backend
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      # Secrets: fill these in from the Render dashboard after the first
+      # deploy. `sync: false` makes Render prompt for a value instead of
+      # committing one to git.
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      # Non-secret overrides with sane defaults.
+      - key: JWT_EXPIRES_IN
+        value: 12h
+      # Comma-separated allow-list. Set this to the Vercel frontend URL
+      # once it's deployed (e.g. `https://estate-agency.vercel.app`).
+      - key: FRONTEND_ORIGIN
+        sync: false
