@@ -11,7 +11,15 @@ export enum TransactionStage {
   COMPLETED = 'completed',
 }
 
-@Schema({ timestamps: true })
+/**
+ * `optimisticConcurrency: true` makes Mongoose include the current `__v`
+ * version key in every `save()` filter. If another write has bumped the
+ * document in the meantime the save fails with `VersionError`, which the
+ * service layer translates to `409 Conflict`. This closes the race where
+ * two clients read the same transaction, both pass the state-machine
+ * validation, and then silently overwrite each other's stage transition.
+ */
+@Schema({ timestamps: true, optimisticConcurrency: true })
 export class Transaction {
   @Prop({ required: true })
   propertyAddress: string;

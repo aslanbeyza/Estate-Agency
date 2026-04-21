@@ -1,4 +1,9 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import { Error as MongooseError } from 'mongoose';
 import { CommissionService } from '../commission/commission.service';
 import { TransactionStage } from './transaction.schema';
 import { TransactionsService } from './transactions.service';
@@ -77,11 +82,46 @@ describe('TransactionsService — Stage Geçişleri', () => {
   });
 
   it('bulunamayan transaction NotFoundException fırlatmalı', async () => {
-    mockTransactionModel.findById.mockReturnValue({ exec: () => Promise.resolve(null) });
+    mockTransactionModel.findById.mockReturnValue({
+      exec: () => Promise.resolve(null),
+    });
 
     await expect(
-      service.updateStage('nonexistent', { stage: TransactionStage.EARNEST_MONEY }),
+      service.updateStage('nonexistent', {
+        stage: TransactionStage.EARNEST_MONEY,
+      }),
     ).rejects.toThrow(NotFoundException);
+  });
+
+  it('eş zamanlı güncelleme (VersionError) → ConflictException(409) fırlatmalı', async () => {
+    const tx = mockTransaction({ stage: TransactionStage.AGREEMENT });
+    mockTransactionModel.findById.mockReturnValue({
+      exec: () => Promise.resolve(tx),
+    });
+    // Başka bir istek arada __v'yi bumpladı: optimistic concurrency VersionError fırlatır.
+    // VersionError ctor `doc._doc._id` okuduğu için _doc shape'i gerekiyor.
+    const versionError = new MongooseError.VersionError(
+      { _doc: { _id: 'tx1' } } as any,
+      0,
+      ['stage'],
+    );
+    mockSave.mockRejectedValueOnce(versionError);
+
+    await expect(
+      service.updateStage('tx1', { stage: TransactionStage.EARNEST_MONEY }),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('beklenmedik save hatası yutulmamalı (raw throw)', async () => {
+    const tx = mockTransaction({ stage: TransactionStage.AGREEMENT });
+    mockTransactionModel.findById.mockReturnValue({
+      exec: () => Promise.resolve(tx),
+    });
+    mockSave.mockRejectedValueOnce(new Error('connection reset'));
+
+    await expect(
+      service.updateStage('tx1', { stage: TransactionStage.EARNEST_MONEY }),
+    ).rejects.toThrow('connection reset');
   });
 });
 

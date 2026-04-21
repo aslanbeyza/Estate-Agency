@@ -78,6 +78,31 @@ const VALID_TRANSITIONS = {
 };
 ```
 
+**Concurrent writes — optimistic concurrency control.** `updateStage` is a classic read-modify-write (`findById` → validate transition → `save`). Without a guard, two clients that read the same transaction at the same `__v` would both pass validation and the second save would silently overwrite the first — a textbook lost-update bug, and in our case it would also desync `commissionBreakdown` from the actual transition history.
+
+The `Transaction` schema therefore enables Mongoose's built-in OCC:
+
+```typescript
+@Schema({ timestamps: true, optimisticConcurrency: true })
+```
+
+Every `save()` is now issued with `{ _id, __v: <loaded version> }` as its update filter and the version key is bumped atomically. If another writer advanced the same document in between, MongoDB matches no rows, Mongoose throws `VersionError`, and the service converts that into `409 Conflict` so the client can refetch and retry:
+
+```typescript
+try {
+  return await tx.save();
+} catch (err) {
+  if (err instanceof MongooseError.VersionError) {
+    throw new ConflictException(
+      `Transaction ${id} was modified by another request. Please refresh and try again.`,
+    );
+  }
+  throw err;
+}
+```
+
+This is intentionally scoped to `Transaction` — it is the only document with a non-trivial state machine. `Agent` writes are append/delete only and don't need per-field concurrency control.
+
 ### 1.5 Commission rules (§4.3 of the brief)
 
 Implemented in `CommissionService.calculate()`:
@@ -143,7 +168,7 @@ Non-integer inputs are rejected at two layers: the DTO (`@IsInt()`) and the serv
 
 Jest unit tests cover:
 - `CommissionService` — §4.3 scenarios 1 & 2, edge cases (fee=0, negative fee, float drift), sum invariant on odd fees.
-- `TransactionsService` — every valid transition, invalid transitions (`400`), terminal state guard, missing transaction (`404`), breakdown fetch before / after completion.
+- `TransactionsService` — every valid transition, invalid transitions (`400`), terminal state guard, missing transaction (`404`), breakdown fetch before / after completion, optimistic-concurrency collision (`409` on `VersionError`), passthrough of unrelated save errors.
 - `AgentsService` — `findOne` happy/missing, `remove` happy/missing, `earnings` aggregation across mixed same-agent and different-agent completed transactions.
 - `AppController` — metadata root.
 

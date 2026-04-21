@@ -1,10 +1,11 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Error as MongooseError, Model } from 'mongoose';
 import { CommissionService } from '../commission/commission.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { UpdateStageDto } from './dto/update-stage.dto';
@@ -68,7 +69,20 @@ export class TransactionsService {
       );
     }
 
-    return tx.save();
+    try {
+      return await tx.save();
+    } catch (err) {
+      // Optimistic-concurrency guard (see transaction.schema.ts).
+      // If a concurrent writer advanced the same transaction between our
+      // `findById` and `save`, Mongoose bumps __v and throws VersionError —
+      // surface that as 409 so the client knows to refetch and retry.
+      if (err instanceof MongooseError.VersionError) {
+        throw new ConflictException(
+          `Transaction ${id} was modified by another request. Please refresh and try again.`,
+        );
+      }
+      throw err;
+    }
   }
 
   async getBreakdown(id: string) {
