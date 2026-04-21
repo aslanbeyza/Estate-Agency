@@ -12,7 +12,8 @@ export default defineNuxtConfig({
   },
   runtimeConfig: {
     public: {
-      apiBase: process.env.NUXT_PUBLIC_API_BASE ?? 'http://localhost:3001',
+      // Trim: dashboard copy/paste often adds trailing newline — breaks fetch URLs.
+      apiBase: (process.env.NUXT_PUBLIC_API_BASE ?? 'http://localhost:3001').trim(),
     },
   },
 });

@@ -1,4 +1,9 @@
-import { parseAllowedOrigins } from './main';
+import {
+  isCorsOriginAllowed,
+  parseAllowedOrigins,
+  trustedVercelProjectSlugs,
+  vercelProjectSlugFromHostname,
+} from './main';
 
 /**
  * The bootstrap function is hard to unit-test (it spins up a real Nest
@@ -29,5 +34,65 @@ describe('parseAllowedOrigins', () => {
     expect(() => parseAllowedOrigins('http://localhost:3000,*')).toThrow(
       /FRONTEND_ORIGIN/,
     );
+  });
+});
+
+describe('vercelProjectSlugFromHostname', () => {
+  it('parses production and preview hostnames', () => {
+    expect(vercelProjectSlugFromHostname('estate-agency-ay4u.vercel.app')).toBe(
+      'estate-agency-ay4u',
+    );
+    expect(
+      vercelProjectSlugFromHostname(
+        'estate-agency-ay4u-git-main-beyzaaslans-projects.vercel.app',
+      ),
+    ).toBe('estate-agency-ay4u');
+  });
+
+  it('returns null for non-Vercel hosts', () => {
+    expect(vercelProjectSlugFromHostname('localhost')).toBeNull();
+    expect(vercelProjectSlugFromHostname('app.example.com')).toBeNull();
+  });
+});
+
+describe('isCorsOriginAllowed', () => {
+  const list = ['https://estate-agency-ay4u.vercel.app'];
+
+  it('allows exact allow-list match', () => {
+    expect(
+      isCorsOriginAllowed('https://estate-agency-ay4u.vercel.app', list),
+    ).toBe(true);
+  });
+
+  it('allows Vercel preview when production URL is on the allow-list', () => {
+    expect(
+      isCorsOriginAllowed(
+        'https://estate-agency-ay4u-git-main-beyzaaslans-projects.vercel.app',
+        list,
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects other Vercel projects', () => {
+    expect(
+      isCorsOriginAllowed('https://evil-copy-git-main-x.vercel.app', list),
+    ).toBe(false);
+  });
+
+  it('allows missing Origin (non-browser clients)', () => {
+    expect(isCorsOriginAllowed(undefined, list)).toBe(true);
+  });
+});
+
+describe('trustedVercelProjectSlugs', () => {
+  it('collects slug from production or preview allow-list entries', () => {
+    expect([
+      ...trustedVercelProjectSlugs(['https://estate-agency-ay4u.vercel.app']),
+    ]).toEqual(['estate-agency-ay4u']);
+    expect([
+      ...trustedVercelProjectSlugs([
+        'https://estate-agency-ay4u-git-main-beyzaaslans-projects.vercel.app',
+      ]),
+    ]).toEqual(['estate-agency-ay4u']);
   });
 });

@@ -28,6 +28,56 @@ export function parseAllowedOrigins(raw: string | undefined): string[] {
   return origins;
 }
 
+const VERCEL_HOST_SUFFIX = '.vercel.app';
+
+/**
+ * Vercel production host is `{project}.vercel.app`; branch previews are
+ * `{project}-git-{branch}-{team}.vercel.app`. We derive a stable project
+ * slug so one `FRONTEND_ORIGIN` entry (production URL) also authorises
+ * preview deployments without pasting every preview URL into Render.
+ */
+export function vercelProjectSlugFromHostname(hostname: string): string | null {
+  if (!hostname.endsWith(VERCEL_HOST_SUFFIX)) return null;
+  const withoutSuffix = hostname.slice(0, -VERCEL_HOST_SUFFIX.length);
+  if (withoutSuffix.includes('-git-')) {
+    return withoutSuffix.split('-git-')[0] ?? null;
+  }
+  return withoutSuffix || null;
+}
+
+export function trustedVercelProjectSlugs(
+  allowedOrigins: string[],
+): Set<string> {
+  const slugs = new Set<string>();
+  for (const o of allowedOrigins) {
+    try {
+      const host = new URL(o).hostname;
+      const slug = vercelProjectSlugFromHostname(host);
+      if (slug) slugs.add(slug);
+    } catch {
+      /* ignore malformed URLs in the allow-list */
+    }
+  }
+  return slugs;
+}
+
+/** Whether `origin` may call this API from a browser (CORS). */
+export function isCorsOriginAllowed(
+  origin: string | undefined,
+  allowedOrigins: string[],
+): boolean {
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+  try {
+    const host = new URL(origin).hostname;
+    const slug = vercelProjectSlugFromHostname(host);
+    if (!slug) return false;
+    return trustedVercelProjectSlugs(allowedOrigins).has(slug);
+  } catch {
+    return false;
+  }
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
@@ -47,8 +97,14 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter());
 
   const allowedOrigins = parseAllowedOrigins(process.env.FRONTEND_ORIGIN);
+  const vercelSlugs = trustedVercelProjectSlugs(allowedOrigins);
   app.enableCors({
-    origin: allowedOrigins,
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
+      callback(null, isCorsOriginAllowed(origin, allowedOrigins));
+    },
     // Matches what we actually use; narrower than the NestJS default
     // (`*`), which reflected every request method back.
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -58,7 +114,13 @@ async function bootstrap() {
     credentials: false,
     maxAge: 600,
   });
-  Logger.log(`CORS locked to: ${allowedOrigins.join(', ')}`, 'Bootstrap');
+  Logger.log(
+    `CORS allow-list: ${allowedOrigins.join(', ')}` +
+      (vercelSlugs.size > 0
+        ? `; Vercel previews also allowed for slug(s): ${[...vercelSlugs].join(', ')}`
+        : ''),
+    'Bootstrap',
+  );
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Estate Agency API')

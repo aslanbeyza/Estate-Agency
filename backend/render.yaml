@@ -35,7 +35,8 @@ services:
       # Non-secret overrides with sane defaults.
       - key: JWT_EXPIRES_IN
         value: 12h
-      # Comma-separated allow-list. Set this to the Vercel frontend URL
-      # once it's deployed (e.g. `https://estate-agency.vercel.app`).
+      # Production Vercel URL is enough — same-project preview deploys
+      # (`*-git-*-*.vercel.app`) are accepted automatically. Custom domains
+      # must still be listed explicitly if used.
       - key: FRONTEND_ORIGIN
         sync: false

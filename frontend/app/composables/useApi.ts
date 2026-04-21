@@ -9,7 +9,7 @@
  */
 export function useApi() {
   const config = useRuntimeConfig();
-  const base = config.public.apiBase as string;
+  const base = String(config.public.apiBase ?? '').trim().replace(/\/$/, '');
 
   // Cookie read is cheap and `useCookie` is already reactive; reading it on
   // every request means freshly-set tokens (after login) are picked up
@@ -36,7 +36,8 @@ export function useApi() {
       ...(token.value ? { Authorization: `Bearer ${token.value}` } : {}),
     };
     try {
-      return (await $fetch(`${base}${path}`, { ...options, headers })) as T;
+      const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
+      return (await $fetch(url, { ...options, headers })) as T;
     } catch (err: any) {
       const status = err?.status ?? err?.statusCode;
       // A 401 means the token is either missing, expired, or the account
