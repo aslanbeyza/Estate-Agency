@@ -11,9 +11,13 @@ A full-stack application that automates the post-agreement lifecycle of a real-e
 
 ## Live deployment
 
-- **API**:      `<https://estate-agency-api.onrender.com>` _(fill in after deploy)_
-- **Swagger**:  `<https://estate-agency-api.onrender.com>/api/docs`
-- **Frontend**: `<https://estate-agency.vercel.app>` _(fill in after deploy)_
+| Resource | URL |
+|----------|-----|
+| **Frontend (Vercel)** | <https://estate-agency-azure.vercel.app> |
+| **API (Render)** | <https://estate-agency-api.onrender.com> |
+| **Swagger** | <https://estate-agency-api.onrender.com/api/docs> |
+
+Replace the API host in this table if your Render service uses a different hostname. The frontend must have `NUXT_PUBLIC_API_BASE` set to that API origin (no trailing slash), and Render’s `FRONTEND_ORIGIN` must list the Vercel URL above for CORS.
 
 > **Cold start notice.** The Render backend runs on the free plan and sleeps after 15 minutes of inactivity. The first request after idle takes ~30–60 seconds while the container wakes up; subsequent requests are instant. Upgrade to the $7/mo starter plan to eliminate this.
 
@@ -126,9 +130,9 @@ The backend won't accept cross-origin requests from Vercel until you tell it to.
 
 1. Render dashboard → your service → **Environment** → edit `FRONTEND_ORIGIN`:
    ```
-   https://estate-agency.vercel.app
+   https://estate-agency-azure.vercel.app
    ```
-   (use your actual Vercel URL).
+   (use your actual Vercel production URL).
 2. Save. Render redeploys automatically (~1 minute).
 3. Open the Vercel URL. If production MongoDB has no admin yet, run the seed **locally** (or any machine with Node) using the **same** `MONGODB_URI` as Render:
    ```bash
@@ -138,9 +142,35 @@ The backend won't accept cross-origin requests from Vercel until you tell it to.
    ```
 4. Log in through the frontend → you're live.
 
-### E. Update this README
+### E. Keep deploy URLs in sync
 
-Replace the two placeholder URLs at the top (`API`, `Frontend`) with your actual Render + Vercel URLs and commit.
+Whenever the production API or Vercel hostname changes, update the [Live deployment](#live-deployment) table, Vercel env (`NUXT_PUBLIC_API_BASE`), and Render `FRONTEND_ORIGIN`, then redeploy.
+
+---
+
+## Technical case compliance (brief checklist)
+
+This repo is structured to match the published **Technical Case (NestJS, MongoDB, Nuxt 3)**. Mapping:
+
+| Requirement | Where it is satisfied |
+|---------------|------------------------|
+| **§2** Transaction lifecycle, commission distribution, financial breakdown, REST API | `backend/src/transactions`, `backend/src/commission`, `GET /transactions/:id/breakdown` |
+| **§3** NestJS, MongoDB Atlas, Mongoose, Jest; Nuxt 3, Pinia, Tailwind | Root table above; `backend/package.json`, `frontend/package.json` |
+| **§4.1** Stages + transitions + dashboard; invalid transitions documented | `TransactionStage`, `TransactionsService.updateStage`, `frontend/app/pages/islemler`, [`DESIGN.md` §1.4](backend/DESIGN.md) |
+| **§4.2** Agency + per-agent amounts + listing/selling rationale | Embedded `commissionBreakdown`, UI `CommissionCard`, [`DESIGN.md` §1.3](backend/DESIGN.md) |
+| **§4.3** 50% / 50% scenarios 1 & 2 + tests | `CommissionService`, `commission.service.spec.ts` |
+| **§5** Design documented | [`backend/DESIGN.md`](backend/DESIGN.md) (backend + frontend architecture) |
+| **§6.1** Monorepo `backend/` + `frontend/` | This repository |
+| **§6.2** Unit tests (commission, stages, core logic) | `npm test` in `backend/` — see Testing below |
+| **§6.3** DESIGN.md | [`backend/DESIGN.md`](backend/DESIGN.md) |
+| **§6.4** README | This file + [`backend/README.md`](backend/README.md) + [`frontend/README.md`](frontend/README.md) |
+| **§6.5** Live API + live frontend + Atlas | [Live deployment](#live-deployment) table; Atlas is required in production ([§A](#a-mongodb-atlas-database)) |
+
+### Known limitations / reviewer's checklist
+
+- **Public Git repository (§6.1):** The case asks for a public repo for reviewers. Publishing and link-sharing are on you; the code layout matches the expected structure.
+- **Problem narrative vs scope:** The brief mentions earnest money, deeds, and *payments* as part of a messy real-world process. This system models the **agreed stage pipeline** and **service-fee distribution**; it does not implement a full multi-line-item payment ledger. That is intentional for the “core” scope; extend with extra collections if you need per-payment traceability.
+- **Deliverable 6.5:** You must keep **MongoDB Atlas** as the production database, and confirm both URLs respond (API `/health`, frontend login). If the Render API hostname differs from the table, update the table and env vars.
 
 ## Documentation
 
@@ -165,4 +195,4 @@ cd backend
 npm test
 ```
 
-**93 unit tests across 10 suites** cover every commission scenario, every stage transition (valid + invalid + concurrent via OCC), the breakdown guard, agent earnings aggregation, authentication flows, RBAC guard semantics, the global exception filter, CORS origin parsing, Mongoose virtuals (`isPayoutReady`, `isSameAgent`), paginated list behaviour (defaults, clamping, `hasMore`), stats aggregation, and index-declaration regression.
+**101 unit tests across 10 suites** cover every commission scenario, every stage transition (valid + invalid + concurrent via OCC), the breakdown guard, agent earnings aggregation, authentication flows, RBAC guard semantics, the global exception filter, CORS origin parsing, Mongoose virtuals (`isPayoutReady`, `isSameAgent`), paginated list behaviour (defaults, clamping, `hasMore`), stats aggregation, and index-declaration regression. Run from `backend/`: `npm test`. If Jest fails on Watchman in your environment, use `CI=true npx jest --ci --watchman=false` instead.

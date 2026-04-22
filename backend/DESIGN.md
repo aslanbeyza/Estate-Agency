@@ -2,6 +2,19 @@
 
 This document records the architectural decisions taken for the technical case. Code-level "why" that is not obvious from reading the source lives here.
 
+## Deliverable mapping (technical case)
+
+| Deliverable / brief section | This document + code |
+|-----------------------------|----------------------|
+| **§4.1** Stages (`agreement` → `earnest_money` → `title_deed` → `completed`), transitions, optional invalid-guard | §1.4, `transactions/transactions.service.ts` |
+| **§4.2** Who earned what (agency + each agent) and why (listing / selling) | §1.3, embedded `commissionBreakdown`, `GET /agents/:id/transactions` |
+| **§4.3** 50% agency, 50% agent pool; same-agent vs split agents | §1.5, `commission/commission.service.ts`, `commission.service.spec.ts` |
+| **§5** Architecture, DTOs, error handling, UI | Full doc; API table §1.7 |
+| **§6.2** Jest: commission, stages, core logic | §1.8 |
+| **§6.3** Architecture, data models, **frontend state (Pinia)** | §1.*, §2.2 |
+
+**Scope note:** The brief’s real-world “payments” and paperwork are represented by the **stage pipeline** and an immutable **commission breakdown** at `completed`, not by a sub-ledger of every bank transfer. A separate payments collection would be a product extension, not a requirement of the case.
+
 ---
 
 ## 1. Backend (NestJS + MongoDB Atlas)
@@ -128,13 +141,9 @@ Implemented in `CommissionService.calculate()`:
 agencyAmount + listingAgentAmount + sellingAgentAmount === totalServiceFee
 ```
 
-is preserved byte-for-byte even for fees that do not divide evenly by 4 (e.g. `100_001 kr`). The agency absorbs the 0–3 kuruş residue, which matches real-world accounting conventions (the house takes the rounding):
+is preserved byte-for-byte even for fees that do not divide evenly by 4 (e.g. `100_001 kr`). The agency absorbs the 0–3 kuruş residue, which matches real-world accounting conventions (the house takes the rounding).
 
-```typescript
-const agentsPool = Math.floor(totalServiceFee / 2);
-const half = Math.floor(agentsPool / 2);
-const agencyAmount = totalServiceFee - listingAgentAmount - sellingAgentAmount;
-```
+**Implementation (not a literal quote of the file):** amounts are split using **basis points** from `CommissionPolicy` (defaults 5000 / 5000 bps, i.e. 50% agency and 50% of the agent pool to each side in the two-agent case). The agent pool is `floor(totalServiceFee * (10000 − agencyBps) / 10000)`; same-agent and different-agent branches then assign listing/selling kuruş; `agencyAmount` is the remainder so the three-way sum always equals `totalServiceFee`. See `commission.service.ts` for the exact formulas.
 
 Non-integer inputs are rejected at two layers: the DTO (`@IsInt()`) and the service (`Number.isInteger` guard) — this catches accidental TL values slipping through as a regression.
 
@@ -320,7 +329,7 @@ Jest unit tests cover:
 - `RolesGuard` — missing / empty `@Roles` passes through; required role matches pass; mismatching role or missing `req.user` throws `Forbidden`; multiple roles behave as OR.
 - `AllExceptionsFilter` — translates driver-level errors to proper HTTP codes, scrubs duplicate-key values.
 
-Total: **93 unit tests** across 10 suites, all green (`npm test`).
+Total: **101 unit tests** across 10 suites, all green (`cd backend && npm test`; use `CI=true npx jest --ci --watchman=false` if Watchman is unavailable in your environment).
 
 ---
 
@@ -405,8 +414,8 @@ Tailwind 4 with custom utility classes defined in `assets/css/main.css` (`.card`
 
 ## 3. Deployment
 
-- MongoDB Atlas cluster (free tier) — connection string in `MONGODB_URI`.
-- Backend: any Node host (Render, Railway, Fly). Env vars: `MONGODB_URI`, `PORT`.
-- Frontend: any Nuxt host (Vercel, Netlify). Env var: `NUXT_PUBLIC_API_BASE` → deployed backend URL.
+- MongoDB Atlas cluster (free tier) — connection string in `MONGODB_URI` (mandatory for the technical case in production).
+- Backend: e.g. Render. Env: `MONGODB_URI`, `JWT_SECRET`, `FRONTEND_ORIGIN`, `PORT`, etc. (see root `README.md` and `backend/.env.example`).
+- Frontend: e.g. Vercel. Env: `NUXT_PUBLIC_API_BASE` — full API origin, **no** trailing slash.
 
-Live URLs are listed in the root `README.md` once deployed.
+**Production example (this repo):** Vercel frontend <https://estate-agency-azure.vercel.app>, API on Render; exact URLs and CORS steps are in the root `README.md` → *Live deployment* and *Tie them back together (CORS)*.

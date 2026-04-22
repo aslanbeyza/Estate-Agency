@@ -11,8 +11,8 @@ Nuxt 3 + Pinia + Tailwind CSS frontend for the estate agency commission manageme
 
 ## Prerequisites
 
-- Node.js LTS (v20+)
-- Backend running — see [`../estate-agency-backend`](../estate-agency-backend)
+- Node.js LTS (v20+; CI uses v22)
+- Backend running — see [`../backend`](../backend)
 
 ## Setup
 
@@ -51,7 +51,7 @@ npm run preview   # preview the built output locally
 | `/islemler/:id`       | Transaction detail — stage timeline, advance button, commission breakdown |
 | `/danismanlar`        | Agents list with per-agent performance + transaction history panel |
 
-> The routes and UI labels are in Turkish because the target consultancy operates in Turkey. API contracts and code are in English. See `../estate-agency-backend/DESIGN.md §2.1` for the rationale.
+> The routes and UI labels are in Turkish because the target consultancy operates in Turkey. API contracts and code are in English. See [`../backend/DESIGN.md`](../backend/DESIGN.md) §2.1 for the rationale.
 
 ## Project layout
 
@@ -69,4 +69,4 @@ app/
   assets/css/main.css            Tailwind layers + utility classes
 ```
 
-Architectural notes (Pinia store design, composables, toast singleton, error contract with the backend) are in `../estate-agency-backend/DESIGN.md §2`.
+Architectural notes (Pinia store design, composables, toast singleton, error contract with the backend) are in [`../backend/DESIGN.md`](../backend/DESIGN.md) §2.

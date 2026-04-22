@@ -12,8 +12,8 @@ NestJS + MongoDB Atlas backend for the estate agency commission management syste
 
 ## Prerequisites
 
-- Node.js LTS (v20+)
-- A MongoDB Atlas cluster (free tier is enough)
+- Node.js LTS (v20+; CI uses v22)
+- A MongoDB Atlas cluster (free tier is enough) — **required** for the technical case in production
 
 ## Setup
 
@@ -45,7 +45,7 @@ npm test            # unit tests
 npm run test:cov    # unit tests + coverage
 ```
 
-24 unit tests across 4 suites cover the commission rules, stage transitions, the `getBreakdown` guard, and the per-agent earnings aggregation. See `DESIGN.md §1.8`.
+**101** unit tests across **10** suites cover commission rules, stage transitions, pagination/stats, the breakdown guard, agent earnings, auth, guards, the global exception filter, and schema/index regressions. See `DESIGN.md §1.8`.
 
 ## Environment variables
 
