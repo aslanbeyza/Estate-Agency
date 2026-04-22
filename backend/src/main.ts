@@ -176,7 +176,7 @@ async function bootstrap() {
 }
 
 // Only auto-run the bootstrap when this module is executed as the entry
-// point (via `nest start`, `node dist/main.js`, etc.). Guarding lets the
+// point (via `nest start`, `node dist/src/main.js`, etc.). Guarding lets the
 // spec file import `parseAllowedOrigins` without spinning up an actual
 // Nest app — which would try to connect to MongoDB and leak worker
 // processes into the Jest run.

@@ -21,6 +21,7 @@ services:
     buildCommand: npm ci && npm run build
     startCommand: npm run start:prod
     healthCheckPath: /health
+    # Redeploy the API on every push to the linked Git branch (see Render → Settings → Build & Deploy).
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
