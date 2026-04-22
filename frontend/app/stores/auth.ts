@@ -1,11 +1,5 @@
 import { defineStore } from 'pinia'
-import type {
-  AuthResponse,
-  AuthUser,
-  BootstrapAdminPayload,
-  LoginPayload,
-  UserRole,
-} from '~/types'
+import type { AuthResponse, AuthUser, LoginPayload, UserRole } from '~/types'
 
 /**
  * Auth state is backed by two cookies:
@@ -54,21 +48,6 @@ export const useAuthStore = defineStore('auth', {
         this.persistSession(res)
       } catch (err: any) {
         this.error = err?.message ?? 'Giriş başarısız'
-        throw err
-      } finally {
-        this.loading = false
-      }
-    },
-
-    async bootstrapAdmin(payload: BootstrapAdminPayload) {
-      const api = useApi()
-      this.loading = true
-      this.error = null
-      try {
-        const res = await api.post<AuthResponse>('/auth/bootstrap-admin', payload)
-        this.persistSession(res)
-      } catch (err: any) {
-        this.error = err?.message ?? 'Kurulum başarısız'
         throw err
       } finally {
         this.loading = false

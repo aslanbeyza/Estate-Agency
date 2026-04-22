@@ -17,6 +17,17 @@ A full-stack application that automates the post-agreement lifecycle of a real-e
 
 > **Cold start notice.** The Render backend runs on the free plan and sleeps after 15 minutes of inactivity. The first request after idle takes ~30–60 seconds while the container wakes up; subsequent requests are instant. Upgrade to the $7/mo starter plan to eliminate this.
 
+### Automatic live updates from GitHub
+
+You do **not** need extra deploy scripts in this repo for production to track Git: connect each host to the **same GitHub repository** once, then every `git push` to the configured branch rebuilds and rolls out automatically.
+
+| Host | What to verify |
+|------|----------------|
+| **Render (API)** | Service was created from this repo (Blueprint or Git-backed web service). **Settings → Build & Deploy → Auto-Deploy** should be **On** for your production branch (e.g. `main`). `backend/render.yaml` already sets `autoDeploy: true` for blueprint-created services. |
+| **Vercel (frontend)** | Same GitHub repo must be **connected** under **Settings → Git**. **Root Directory** = `frontend`. **Production Branch** must match the branch you push to (often `main`). With that, every push to that branch starts a **Production Deployment** automatically — check **Deployments** in the Vercel dashboard. Do not use “Ignored Build Step” to skip all builds unless you mean to. |
+
+After that, workflow is: **commit → push to GitHub → wait for Render + Vercel build logs → live site updates.** Optional: [GitHub Actions CI](.github/workflows/ci.yml) runs tests/build on push/PR. Optional alternative: [deploy-vercel workflow](.github/workflows/deploy-vercel.yml) only if you prefer deploying the frontend via Actions (off by default; see file header — avoid running it together with Vercel’s Git integration or you’ll double-deploy).
+
 ## Quick start (local, both projects)
 
 ```bash
@@ -35,15 +46,16 @@ npm install
 npm run dev           # → http://localhost:3000
 ```
 
-### First-run bootstrap
+### First-run admin (seed)
 
-Authentication is required on every route. Create the first admin user by `POST`-ing to `/auth/bootstrap-admin` (once, only works while the users collection is empty):
+Authentication is required on every route. After MongoDB is reachable, create the default admin **once** from the backend folder (uses the same `MONGODB_URI` as the API):
 
 ```bash
-curl -X POST http://localhost:3001/auth/bootstrap-admin \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@example.com","password":"changeme123","name":"Admin"}'
+cd backend
+npm run seed:admin
 ```
+
+By default this creates `admin@gmail.com` / `password123` (override with `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_NAME` if needed). If that email already exists as an active user, the script skips and does nothing.
 
 Then open http://localhost:3000, log in, create a few agents, then a transaction, then walk it through `agreement → earnest_money → title_deed → completed`. The commission breakdown appears on the transaction detail page once completed.
 
@@ -99,6 +111,8 @@ This repo already ships a `backend/render.yaml` blueprint. You only need to clic
 3. **Environment Variables** → add one:
    - `NUXT_PUBLIC_API_BASE` = `https://estate-agency-api.onrender.com` (no trailing slash)
 4. **Deploy.** First build takes 2–3 minutes. Vercel gives you a URL like `https://estate-agency.vercel.app`.
+5. **Automatic updates:** In **Settings → Git**, confirm the repository is connected and **Production Branch** is the branch you use for releases (e.g. `main`). After this, **every `git push` to that branch** triggers a new production deployment for `frontend/`; you’ll see it under the **Deployments** tab. Pull requests get **Preview** URLs automatically.
+6. If pushes don’t trigger deploys: reconnect the GitHub app (Settings → Git), or check that the commit author has access to the Vercel team. You do **not** need the optional `.github/workflows/deploy-vercel.yml` unless you deliberately want to deploy through GitHub Actions instead.
 
 ### D. Tie them back together (CORS)
 
@@ -110,11 +124,11 @@ The backend won't accept cross-origin requests from Vercel until you tell it to.
    ```
    (use your actual Vercel URL).
 2. Save. Render redeploys automatically (~1 minute).
-3. Open the Vercel URL. Log in with the admin you bootstrapped locally — wait, you haven't bootstrapped production yet. Do it now against the live API:
+3. Open the Vercel URL. If production MongoDB has no admin yet, run the seed **locally** (or any machine with Node) using the **same** `MONGODB_URI` as Render:
    ```bash
-   curl -X POST https://estate-agency-api.onrender.com/auth/bootstrap-admin \
-     -H "Content-Type: application/json" \
-     -d '{"email":"admin@example.com","password":"changeme123","name":"Admin"}'
+   cd backend
+   export MONGODB_URI='mongodb+srv://...'   # paste from Atlas / Render secrets
+   npm run seed:admin
    ```
 4. Log in through the frontend → you're live.
 
