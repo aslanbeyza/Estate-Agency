@@ -158,8 +158,9 @@ async function onLogout() {
       </div>
     </aside>
 
-    <!-- Main -->
-    <div class="md:ml-64 pt-14 md:pt-0 min-h-screen">
+    <!-- Main: avoid a second min-h-screen here — it stretches the column and
+         leaves a tall empty band below short pages (looks like a broken table). -->
+    <div class="md:ml-64 pt-14 md:pt-0 pb-10">
       <main class="p-4 md:p-8 max-w-7xl">
         <NuxtPage />
       </main>

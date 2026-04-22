@@ -294,7 +294,7 @@ const { showForm, form, submitting, formError, submit, toggle } = useCrudForm({
         </div>
         <div
           v-else-if="txStore.transactions.length > 0"
-          class="flex items-center justify-center py-4 text-xs text-slate-400 dark:text-slate-500"
+          class="border-t border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/30 flex items-center justify-center py-3 text-xs text-slate-500 dark:text-slate-400"
         >
           Tüm işlemler yüklendi ({{ txStore.transactions.length }} / {{ txStore.pagination.total }})
         </div>

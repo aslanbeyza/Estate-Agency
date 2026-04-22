@@ -31,11 +31,13 @@ const agentTx = computed(() =>
   selectedId.value ? (agentStore.transactions[selectedId.value] ?? []) : [],
 )
 
-// Lazy-load the per-agent transaction feed the first time the user opens
-// their detail panel; subsequent clicks use the cached value in the store.
+// Lazy-load per-agent transactions. Skip refetch only when we already have
+// rows — `[]` is truthy in JS, so `if (cache) return` would freeze an empty
+// list forever after a failed or race first fetch.
 watch(selectedId, async (id) => {
   if (!id) return
-  if (agentStore.transactions[id]) return
+  const cached = agentStore.transactions[id]
+  if (cached !== undefined && cached.length > 0) return
   await agentStore.fetchTransactions(id)
 })
 
