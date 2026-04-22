@@ -321,11 +321,15 @@ export class AgentsService {
   async transactions(id: string): Promise<AgentTransactionView[]> {
     const agent = await this.findOne(id);
     const agentId = String(agent._id);
-    const agentObjectId = new Types.ObjectId(id);
 
+    // Match `stats()` $lookup semantics: compare via $toString so we stay
+    // consistent if stored refs ever differ in BSON shape from a plain ObjectId query.
     const txs = await this.transactionModel
       .find({
-        $or: [{ listingAgent: agentObjectId }, { sellingAgent: agentObjectId }],
+        $or: [
+          { $expr: { $eq: [{ $toString: '$listingAgent' }, agentId] } },
+          { $expr: { $eq: [{ $toString: '$sellingAgent' }, agentId] } },
+        ],
       })
       .populate('listingAgent', 'name email deletedAt')
       .populate('sellingAgent', 'name email deletedAt')

@@ -38,10 +38,16 @@ export class AgentsController {
     return this.agentsService.stats();
   }
 
-  @Get(':id')
-  @ApiOperation({ summary: 'Get an agent by id' })
-  findOne(@Param('id') id: string) {
-    return this.agentsService.findOne(id);
+  // Static path `stats` is above. These multi-segment routes must register
+  // before `@Get(':id')` so `/agents/:id/transactions` never falls through to
+  // the single-param handler on any Nest/router edge case.
+  @Get(':id/transactions')
+  @ApiOperation({
+    summary:
+      "Agent-scoped transaction feed with each item's role and payout amount pre-computed",
+  })
+  transactions(@Param('id') id: string) {
+    return this.agentsService.transactions(id);
   }
 
   @Get(':id/earnings')
@@ -52,13 +58,10 @@ export class AgentsController {
     return this.agentsService.earnings(id);
   }
 
-  @Get(':id/transactions')
-  @ApiOperation({
-    summary:
-      "Agent-scoped transaction feed with each item's role and payout amount pre-computed",
-  })
-  transactions(@Param('id') id: string) {
-    return this.agentsService.transactions(id);
+  @Get(':id')
+  @ApiOperation({ summary: 'Get an agent by id' })
+  findOne(@Param('id') id: string) {
+    return this.agentsService.findOne(id);
   }
 
   @Delete(':id')
