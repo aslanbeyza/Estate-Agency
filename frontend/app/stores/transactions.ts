@@ -161,7 +161,11 @@ export const useTransactionsStore = defineStore('transactions', {
     },
 
     async fetchStats() {
-      this.stats = await useApi().get<TransactionStats>('/transactions/stats');
+      await withLoading(this, async () => {
+        this.stats = await useApi().get<TransactionStats>(
+          '/transactions/stats',
+        );
+      });
     },
 
     async fetchOne(id: string) {

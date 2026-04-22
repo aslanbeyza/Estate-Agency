@@ -100,19 +100,25 @@ This repo already ships a `backend/render.yaml` blueprint. You only need to clic
    ```
    Should return `{"status":"ok", ...}`. Swagger lives at `/api/docs`.
 
-### C. Vercel (frontend)
+### C. Vercel (frontend) — new project from scratch
 
-1. <https://vercel.com/new> → import the same GitHub repo.
-2. **Configure Project**:
-   - **Framework Preset**: Nuxt (should auto-detect).
-   - **Root Directory**: `frontend` ← important, this is a monorepo.
-   - **Build Command**: leave default (`npm run build`).
-   - **Output Directory**: leave default.
-3. **Environment Variables** → add one:
-   - `NUXT_PUBLIC_API_BASE` = `https://estate-agency-api.onrender.com` (no trailing slash)
-4. **Deploy.** First build takes 2–3 minutes. Vercel gives you a URL like `https://estate-agency.vercel.app`.
-5. **Automatic updates:** In **Settings → Git**, confirm the repository is connected and **Production Branch** is the branch you use for releases (e.g. `main`). After this, **every `git push` to that branch** triggers a new production deployment for `frontend/`; you’ll see it under the **Deployments** tab. Pull requests get **Preview** URLs automatically.
-6. If pushes don’t trigger deploys: reconnect the GitHub app (Settings → Git), or check that the commit author has access to the Vercel team. You do **not** need the optional `.github/workflows/deploy-vercel.yml` unless you deliberately want to deploy through GitHub Actions instead.
+Use this after deleting an old Vercel project or the first time you connect the repo.
+
+1. Open <https://vercel.com/new> and sign in (GitHub login is easiest).
+2. **Add New… → Project** → **Import** your GitHub repo (select the **monorepo root**, not `frontend` only).
+3. On the **Configure Project** screen (do not click Deploy until these are set):
+   - **Framework Preset**: Nuxt.js (auto-detected).
+   - **Root Directory**: click **Edit** → set to **`frontend`** → **Continue**. This is required so Vercel runs `npm install` / `npm run build` inside the Nuxt app, not the repo root.
+   - **Build Command**: `npm run build` (default).
+   - **Output Directory**: leave **empty** — Nuxt on Vercel uses Nitro’s output; the preset is applied automatically when `VERCEL` is set during build (see `nuxt.config.ts`).
+4. **Environment Variables** → **Add**:
+   - Name: `NUXT_PUBLIC_API_BASE`  
+   - Value: your live API URL, e.g. `https://estate-agency-api.onrender.com` (**no** trailing slash).
+5. **Deploy**. Wait for the build; fix any red errors in the deployment log (common mistake: forgetting **Root Directory** `frontend`).
+6. **Git → Production Branch**: under **Settings → Git**, set **Production Branch** to `main` (or whatever you use). With the repo connected, **every `git push` to that branch** creates a new **Production** deployment.
+7. If the Vercel hostname changed (e.g. new `*.vercel.app` URL), update **`FRONTEND_ORIGIN`** on Render (step D) to match exactly, then redeploy the API so CORS allows the new origin.
+
+**Note:** You do **not** need `.github/workflows/deploy-vercel.yml` unless you explicitly want CLI-based deploys. The dashboard Git connection is enough for automatic updates.
 
 ### D. Tie them back together (CORS)
 

@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineNuxtConfig({
@@ -6,6 +7,8 @@ export default defineNuxtConfig({
   dir: { pages: 'pages' },
   devtools: { enabled: true },
   devServer: { port: 3000 },
+  // Vercel sets VERCEL during build; Nitro then emits serverless output for this host.
+  ...(process.env.VERCEL ? { nitro: { preset: 'vercel' as const } } : {}),
   modules: ['@pinia/nuxt'],
   vite: {
     plugins: [tailwindcss()],
