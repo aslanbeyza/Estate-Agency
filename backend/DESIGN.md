@@ -217,10 +217,10 @@ The commission and stage-transition endpoints manipulate money and contractual s
 
 **Login flow.** `POST /auth/login` validates email + password and returns `{ access_token, user }`. The token is a standard JWT signed with `JWT_SECRET` (the app refuses to boot if unset or empty) and expires after `JWT_EXPIRES_IN` (default `12h`). `ExtractJwt.fromAuthHeaderAsBearerToken()` — no cookie-based session, no CSRF surface to manage.
 
-**Bootstrap.** `POST /auth/bootstrap-admin` is a one-shot endpoint that creates the first admin account **only while the users collection is empty**; once any user exists it returns `403`. This removes the need for a hardcoded seed password and keeps the "first user of a fresh DB" path out-of-band in the source tree.
+**Initial admin.** The first admin is created **out of band** via `npm run seed:admin` in `backend/` (script `scripts/seed-admin.ts`), using `MONGODB_URI`. It is idempotent: if an active user with the seed email already exists, the script does nothing. Default credentials are documented in the repo root `README.md`; production deployments should override via `SEED_ADMIN_*` env vars or change the password after first login.
 
 **Guards (global + opt-out).**
-- `JwtAuthGuard` is registered as `APP_GUARD`, so every route requires a valid Bearer token by default — secure-by-default. Individual routes opt out with `@Public()` (login, bootstrap, health, root, Swagger UI).
+- `JwtAuthGuard` is registered as `APP_GUARD`, so every route requires a valid Bearer token by default — secure-by-default. Individual routes opt out with `@Public()` (login, health, root, Swagger UI).
 - `RolesGuard` also runs globally and enforces `@Roles(UserRole.ADMIN)` / `@Roles(UserRole.AGENT, UserRole.ADMIN)` metadata. Missing `@Roles` means "any authenticated user is fine".
 - On every request `JwtStrategy.validate` re-reads the user from MongoDB. A soft-deleted user is rejected (`401`) even if their token has not expired yet — revocation is immediate.
 
@@ -228,7 +228,7 @@ The commission and stage-transition endpoints manipulate money and contractual s
 
 | Route                                        | Public | agent | admin |
 |----------------------------------------------|:-:|:-:|:-:|
-| `POST /auth/login`, `/auth/bootstrap-admin`  | ✓ |   |   |
+| `POST /auth/login`                           | ✓ |   |   |
 | `GET /health`, `/`, `/api/docs`              | ✓ |   |   |
 | `GET /auth/me`                               |   | ✓ | ✓ |
 | `GET /agents`, `/agents/stats`, `/agents/:id/*` |   | ✓ | ✓ |
@@ -250,7 +250,7 @@ Because `stageHistory.by` points at a soft-deletable user, history never silentl
 
 - **`helmet()`** is the first middleware in the pipeline (`app.use(helmet())` in `main.ts`). Sets `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Strict-Transport-Security`, `Referrer-Policy`, etc. Stock defaults — the API is JSON-only and the only served HTML is Swagger UI on the same origin.
 - **`ThrottlerModule`** is registered globally with a 60 requests / 60 seconds per-IP bucket. Enough for an office of a few dozen staff clicking through the dashboard; tight enough that a dumb scraper gives up quickly.
-- **Login + bootstrap endpoints** layer on `@Throttle({ default: { limit: 5, ttl: 60_000 } })` (3 for bootstrap). An attacker testing 5 passwords per minute on a bcrypt-protected hash is not a meaningful threat; the rate limit closes what little window remains.
+- **Login** layers on `@Throttle({ default: { limit: 5, ttl: 60_000 } })`. An attacker testing 5 passwords per minute on a bcrypt-protected hash is not a meaningful threat; the rate limit closes what little window remains.
 
 ### 1.6g Pagination and dashboard aggregation
 
@@ -291,7 +291,6 @@ With pagination in place, every extra millisecond of query planning compounds ov
 | GET    | `/health`                      | public | Liveness + mongo connectivity             |
 | GET    | `/api/docs`                    | public | Swagger UI                                |
 | POST   | `/auth/login`                  | public (5/min) | Email + password → Bearer token  |
-| POST   | `/auth/bootstrap-admin`        | public (3/min, disabled after 1st user) | Create first admin |
 | GET    | `/auth/me`                     | any authenticated | Current user claims           |
 | POST   | `/agents`                      | admin | Create agent                             |
 | GET    | `/agents`                      | any authenticated | List active agents        |
@@ -317,7 +316,7 @@ Jest unit tests cover:
 - `Transaction` schema virtuals — `isPayoutReady` is false until `stage = completed` **and** the breakdown has been populated; `isSameAgent` compares populated / raw refs; JSON output ships both virtuals and hides `__v`. Index tests assert all four ESR compound indexes are still declared so no future refactor can silently bring back collection scans.
 - `AppController` — metadata root.
 
-- `AuthService` — login flow (token shape, `Unauthorized` for unknown email or wrong password, no hash leakage in the response), bootstrap flow (creates admin only when users collection is empty, idempotent `Forbidden` thereafter).
+- `AuthService` — login flow (token shape, `Unauthorized` for unknown email or wrong password, no hash leakage in the response).
 - `RolesGuard` — missing / empty `@Roles` passes through; required role matches pass; mismatching role or missing `req.user` throws `Forbidden`; multiple roles behave as OR.
 - `AllExceptionsFilter` — translates driver-level errors to proper HTTP codes, scrubs duplicate-key values.
 

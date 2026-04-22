@@ -1,12 +1,7 @@
-import {
-  ForbiddenException,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UserRole } from '../users/user.schema';
 import { UsersService } from '../users/users.service';
-import { BootstrapAdminDto } from './dto/bootstrap.dto';
 import { LoginDto } from './dto/login.dto';
 
 export interface AuthResponse {
@@ -44,34 +39,6 @@ export class AuthService {
       user.email,
       user.name,
       user.role,
-    );
-  }
-
-  /**
-   * Creates the first admin user when no users exist yet. Intentionally
-   * refuses to run (`Forbidden`) once any user is present — after that,
-   * new admins must be created by an existing admin through the normal
-   * (future) user-admin endpoints. This solves the chicken/egg problem
-   * without shipping a hardcoded seed password.
-   */
-  async bootstrapAdmin(dto: BootstrapAdminDto): Promise<AuthResponse> {
-    const count = await this.users.count();
-    if (count > 0) {
-      throw new ForbiddenException(
-        'Bootstrap endpoint is disabled once at least one user exists',
-      );
-    }
-    const created = await this.users.create({
-      email: dto.email,
-      password: dto.password,
-      name: dto.name,
-      role: UserRole.ADMIN,
-    });
-    return this.issueToken(
-      String(created._id),
-      created.email,
-      created.name,
-      created.role,
     );
   }
 

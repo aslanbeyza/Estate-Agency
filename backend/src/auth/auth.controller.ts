@@ -4,7 +4,6 @@ import { Throttle } from '@nestjs/throttler';
 import { AuthService, AuthResponse } from './auth.service';
 import { AuthUser, CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
-import { BootstrapAdminDto } from './dto/bootstrap.dto';
 import { LoginDto } from './dto/login.dto';
 
 @ApiTags('auth')
@@ -22,18 +21,6 @@ export class AuthController {
   @ApiOperation({ summary: 'Exchange email + password for a Bearer token' })
   login(@Body() dto: LoginDto): Promise<AuthResponse> {
     return this.auth.login(dto);
-  }
-
-  @Public()
-  @Post('bootstrap-admin')
-  @HttpCode(201)
-  @Throttle({ default: { limit: 3, ttl: 60_000 } })
-  @ApiOperation({
-    summary:
-      'Creates the first admin user. Disabled automatically once any user exists.',
-  })
-  bootstrap(@Body() dto: BootstrapAdminDto): Promise<AuthResponse> {
-    return this.auth.bootstrapAdmin(dto);
   }
 
   @Get('me')

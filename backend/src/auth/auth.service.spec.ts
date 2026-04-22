@@ -1,4 +1,4 @@
-import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UserRole } from '../users/user.schema';
 import { UsersService } from '../users/users.service';
@@ -22,7 +22,6 @@ describe('AuthService', () => {
     ({
       findByEmailForAuth: jest.fn(),
       verifyPassword: jest.fn(),
-      count: jest.fn(),
       create: jest.fn(),
       ...over,
     }) as unknown as UsersService;
@@ -72,45 +71,6 @@ describe('AuthService', () => {
       await expect(
         service.login({ email: baseUser.email, password: 'wrong' }),
       ).rejects.toThrow(UnauthorizedException);
-    });
-  });
-
-  describe('bootstrapAdmin', () => {
-    it('user yokken admin yaratır ve token döner', async () => {
-      const users = buildUsers({
-        count: jest.fn().mockResolvedValue(0),
-        create: jest.fn().mockResolvedValue({
-          _id: 'u1',
-          email: 'admin@estate.com',
-          name: 'Admin',
-          role: UserRole.ADMIN,
-        }),
-      });
-      const service = new AuthService(users, jwt);
-
-      const res = await service.bootstrapAdmin({
-        email: 'admin@estate.com',
-        password: 'changeme!',
-        name: 'Admin',
-      });
-
-      expect(users.create).toHaveBeenCalledWith(
-        expect.objectContaining({ role: UserRole.ADMIN }),
-      );
-      expect(res.user.role).toBe(UserRole.ADMIN);
-    });
-
-    it('en az bir user varsa Forbidden atar (idempotent bootstrap)', async () => {
-      const users = buildUsers({ count: jest.fn().mockResolvedValue(1) });
-      const service = new AuthService(users, jwt);
-
-      await expect(
-        service.bootstrapAdmin({
-          email: 'x@x.com',
-          password: '12345678',
-          name: 'X',
-        }),
-      ).rejects.toThrow(ForbiddenException);
     });
   });
 });

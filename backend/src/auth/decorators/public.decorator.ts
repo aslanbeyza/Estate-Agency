@@ -2,8 +2,8 @@ import { SetMetadata } from '@nestjs/common';
 
 /**
  * Opts a route (or entire controller) out of the globally registered
- * `JwtAuthGuard`. Used for login, health checks, Swagger docs and the
- * one-shot bootstrap endpoint. Prefer `@Public()` on specific handlers
+ * `JwtAuthGuard`. Used for login, health checks, and Swagger docs.
+ * Prefer `@Public()` on specific handlers
  * over whole controllers so nothing becomes accidentally open when we
  * add new routes.
  */
