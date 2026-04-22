@@ -131,7 +131,7 @@ const canManageAgents = computed(() => auth.isAdmin)
             </div>
             <div class="bg-emerald-50 dark:bg-emerald-950/40 rounded-lg py-2">
               <p class="text-base font-bold text-emerald-700 dark:text-emerald-400">{{ agent.completedCount }}</p>
-              <p class="text-xs text-emerald-500 dark:text-emerald-600">Kapandı</p>
+              <p class="text-xs text-emerald-500 dark:text-emerald-600">Tamamlanan</p>
             </div>
           </div>
           <div class="pt-2.5 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">

@@ -10,7 +10,7 @@ const agentStore = useAgentsStore()
 // though `transactions` is now a *windowed* slice of the collection.
 await Promise.all([
   txStore.fetchStats(),
-  txStore.fetchPage({ limit: 10, offset: 0, append: false }),
+  txStore.fetchPage({ limit: 10, offset: 0, append: false, stage: undefined }),
   agentStore.fetchAll(),
 ])
 

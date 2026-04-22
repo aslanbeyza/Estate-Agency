@@ -182,8 +182,18 @@ export class AgentsService {
                 $match: {
                   $expr: {
                     $or: [
-                      { $eq: ['$listingAgent', '$$agentId'] },
-                      { $eq: ['$sellingAgent', '$$agentId'] },
+                      {
+                        $eq: [
+                          { $toString: '$listingAgent' },
+                          { $toString: '$$agentId' },
+                        ],
+                      },
+                      {
+                        $eq: [
+                          { $toString: '$sellingAgent' },
+                          { $toString: '$$agentId' },
+                        ],
+                      },
                     ],
                   },
                 },
@@ -207,7 +217,12 @@ export class AgentsService {
                 $filter: {
                   input: '$txs',
                   as: 't',
-                  cond: { $eq: ['$$t.listingAgent', '$_id'] },
+                  cond: {
+                    $eq: [
+                      { $toString: '$$t.listingAgent' },
+                      { $toString: '$_id' },
+                    ],
+                  },
                 },
               },
             },
@@ -216,7 +231,12 @@ export class AgentsService {
                 $filter: {
                   input: '$txs',
                   as: 't',
-                  cond: { $eq: ['$$t.sellingAgent', '$_id'] },
+                  cond: {
+                    $eq: [
+                      { $toString: '$$t.sellingAgent' },
+                      { $toString: '$_id' },
+                    ],
+                  },
                 },
               },
             },
@@ -246,14 +266,24 @@ export class AgentsService {
                     $add: [
                       {
                         $cond: [
-                          { $eq: ['$$t.listingAgent', '$_id'] },
+                          {
+                            $eq: [
+                              { $toString: '$$t.listingAgent' },
+                              { $toString: '$_id' },
+                            ],
+                          },
                           '$$t.commissionBreakdown.listingAgentAmount',
                           0,
                         ],
                       },
                       {
                         $cond: [
-                          { $eq: ['$$t.sellingAgent', '$_id'] },
+                          {
+                            $eq: [
+                              { $toString: '$$t.sellingAgent' },
+                              { $toString: '$_id' },
+                            ],
+                          },
                           '$$t.commissionBreakdown.sellingAgentAmount',
                           0,
                         ],

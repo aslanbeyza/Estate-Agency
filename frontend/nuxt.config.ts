@@ -10,6 +10,11 @@ export default defineNuxtConfig({
   vite: {
     plugins: [tailwindcss()],
   },
+  // Common typo: /islemeler → correct route is /islemler
+  routeRules: {
+    '/islemeler': { redirect: { to: '/islemler', statusCode: 301 } },
+    '/islemeler/**': { redirect: { to: '/islemler/**', statusCode: 301 } },
+  },
   runtimeConfig: {
     public: {
       // Trim: dashboard copy/paste often adds trailing newline — breaks fetch URLs.

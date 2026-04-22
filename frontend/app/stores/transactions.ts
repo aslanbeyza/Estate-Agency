@@ -81,9 +81,12 @@ export const useTransactionsStore = defineStore('transactions', {
      * - `append: false`  → replace the list (filter change, initial load,
      *                      or deep-link into `?page=N`).
      *
-     * When the caller provides a `stage` different from the current
-     * filter, the list is reset regardless of `append`, because stage
-     * change implies a different collection of rows.
+     * **Stage filter:** if the caller passes a `stage` property (including
+     * explicit `undefined` for “all stages”), the store filter is updated.
+     * Omitting `stage` keeps the previous filter — intentional for
+     * `append: true` loads. Callers that mean “show everything” must pass
+     * `stage: undefined` so a leftover filter from another page does not
+     * desync KPI tabs from the list (stats are global; the list is filtered).
      */
     async fetchPage(
       opts: {
@@ -93,15 +96,15 @@ export const useTransactionsStore = defineStore('transactions', {
         append?: boolean;
       } = {},
     ) {
-      const stageChanged =
-        opts.stage !== undefined && opts.stage !== this.filter.stage;
-      const append = !!opts.append && !stageChanged;
+      if ('stage' in opts) {
+        this.filter.stage = opts.stage;
+      }
 
+      const append = !!opts.append;
       const limit = opts.limit ?? this.pagination.limit;
       const offset =
         opts.offset ?? (append ? this.pagination.offset + this.pagination.limit : 0);
 
-      if (stageChanged) this.filter.stage = opts.stage;
       if (!append) this.transactions = [];
 
       const params = new URLSearchParams();
